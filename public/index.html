@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Meet — Collab Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=20260925mobileFix1">
+  <link rel="stylesheet" href="styles.css?v=20260925mobileFix2">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>">
 </head>
 <body>
@@ -61,6 +61,12 @@
             <i class="fa-solid fa-ellipsis-vertical"></i>
           </button>
           <div id="moreMenu" class="more-menu hidden" role="menu">
+            <button type="button" class="more-item more-in-call more-copy-code hidden" data-action="copy-code" role="menuitem">
+              <i class="fa-regular fa-copy"></i> Copy meeting code
+            </button>
+            <button type="button" class="more-item more-in-call more-share-link hidden" data-action="share-link" role="menuitem">
+              <i class="fa-solid fa-link"></i> Share invite link
+            </button>
             <button type="button" class="more-item more-activity hidden" data-action="invite" role="menuitem">
               <i class="fa-solid fa-user-plus"></i> Invite
             </button>
@@ -87,6 +93,13 @@
             </button>
             <button type="button" class="more-item more-signup" data-action="signup" role="menuitem">
               <i class="fa-solid fa-user-plus"></i> Sign up
+            </button>
+            <div class="more-sep more-in-call hidden" role="separator"></div>
+            <button type="button" class="more-item more-in-call more-leave hidden" data-action="leave" role="menuitem">
+              <i class="fa-solid fa-right-from-bracket"></i> Leave call
+            </button>
+            <button type="button" class="more-item more-in-call more-end danger-item hidden" data-action="end-meeting" role="menuitem">
+              <i class="fa-solid fa-phone-slash"></i> End for everyone
             </button>
           </div>
         </div>
@@ -929,6 +942,6 @@
   <script src="js/features/mute.js?v=20260924secMob1"></script>
   <script src="js/features/device-icons.js?v=20260924secMob1"></script>
   <script src="js/main.js?v=20260924secMob1"></script>
-  <script src="js/core/app.js?v=20260924secMob1"></script>
+  <script src="js/core/app.js?v=20260925mobileFix2"></script>
 </body>
 </html>

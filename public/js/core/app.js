@@ -313,7 +313,32 @@
     else if (action === 'logout') logoutBtn?.click();
     else if (action === 'login') openAuthModal('login');
     else if (action === 'signup') openAuthModal('signup');
+    else if (action === 'copy-code') copyCodeBtn?.click();
+    else if (action === 'share-link') {
+      if (typeof copyInviteLink === 'function') copyInviteLink();
+      else $('shareLinkBtnTop')?.click();
+    }
+    else if (action === 'leave') leaveBtn?.click();
+    else if (action === 'end-meeting') {
+      if (typeof endMeetingConfirm === 'function') endMeetingConfirm();
+      else $('endMeetBtnTop')?.click();
+    }
   });
+
+  function syncMoreMenuInCall() {
+    const inCall = !!(currentMeeting && meetingView && !meetingView.classList.contains('hidden'));
+    document.querySelectorAll('.more-in-call').forEach((el) => {
+      el.classList.toggle('hidden', !inCall);
+    });
+    const isHost = !!(currentMeeting && (
+      currentMeeting.isHost ||
+      myRole === 'host' ||
+      myRole === 'cohost'
+    ));
+    document.querySelectorAll('.more-end').forEach((el) => {
+      el.classList.toggle('hidden', !inCall || !isHost);
+    });
+  }
 
   loginForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1382,8 +1407,36 @@
     await startShare();
   }
 
+  function canScreenShare() {
+    try {
+      if (typeof window === 'undefined') return false;
+      if (!window.isSecureContext) return false;
+      const md = navigator.mediaDevices;
+      if (!md) return false;
+      return typeof md.getDisplayMedia === 'function';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function screenShareUnsupportedMessage() {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      return 'Screen sharing is limited on iOS. Use Safari 17+ on a real device (not the desktop simulator), or share from a desktop browser.';
+    }
+    if (!window.isSecureContext) {
+      return 'Screen sharing requires HTTPS (or localhost). Open the app over a secure connection and try again.';
+    }
+    return 'Screen sharing is not available in this browser or device mode.\n\n• Chrome DevTools device toolbar often blocks getDisplayMedia — try a real phone or desktop.\n• On Android, use up-to-date Chrome over HTTPS and allow the permission when prompted.';
+  }
+
   async function startShare() {
     if (!room?.localParticipant) { alert('Not connected to media server yet.'); return; }
+    if (!canScreenShare()) {
+      alert(screenShareUnsupportedMessage());
+      return;
+    }
     const preset = getSendPreset();
     try {
       // motion + high bitrate keeps YouTube clearer while playing (not only when paused)
@@ -1423,11 +1476,25 @@
       }
     } catch (e) {
       console.error('[LiveKit] startShare failed', e);
+      const msg = String((e && (e.message || e.name)) || '');
+      const denied = /NotAllowedError|Permission denied|denied|PermissionDismissed/i.test(msg);
+      const unsupported = /NotSupportedError|getDisplayMedia|not supported|undefined is not/i.test(msg);
+      if (unsupported || !canScreenShare()) {
+        alert(screenShareUnsupportedMessage());
+        return;
+      }
       try {
         await room.localParticipant.setScreenShareEnabled(true, { audio: true });
       } catch (e2) {
         console.error(e2);
-        alert('Could not start screen share. Please allow the permission.\n' + (e2.message || e.message || ''));
+        const m2 = String((e2 && (e2.message || e2.name)) || msg);
+        if (/NotAllowedError|Permission denied|denied/i.test(m2) || denied) {
+          alert('Screen share permission was blocked.\n\nWhen the browser prompt appears, choose a screen/window and allow sharing. If you previously blocked it, reset site permissions for this origin.');
+        } else if (/NotSupportedError|getDisplayMedia|not supported/i.test(m2)) {
+          alert(screenShareUnsupportedMessage());
+        } else {
+          alert('Could not start screen share.\n' + (m2 || 'Unknown error'));
+        }
       }
     }
   }
@@ -1977,6 +2044,7 @@
     $('meetingNameTop')?.classList.add('hidden');
     $('shareLinkBtnTop')?.classList.add('hidden');
     $('endMeetBtnTop')?.classList.add('hidden');
+    if (typeof syncMoreMenuInCall === 'function') syncMoreMenuInCall();
     setWsStatus('left');
   }
 
@@ -3331,6 +3399,7 @@
     if (endTop) endTop.classList.toggle('hidden', !isHost || !currentMeeting);
     var shareTop = $('shareLinkBtnTop');
     if (shareTop) shareTop.classList.toggle('hidden', !currentMeeting);
+    if (typeof syncMoreMenuInCall === 'function') syncMoreMenuInCall();
   }
 
   async function copyInviteLink() {

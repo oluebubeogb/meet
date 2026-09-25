@@ -122,8 +122,11 @@ html.dark body, body.dark {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  max-height: 100dvh;
   min-height: 0;
   overflow: hidden;
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* ===== Topbar ===== */
@@ -1057,6 +1060,17 @@ body.dark .history-card {
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
+}
+.more-sep {
+  height: 1px;
+  margin: 0.35rem 0.45rem;
+  background: var(--border);
+}
+.more-item.danger-item {
+  color: var(--danger, #e5484d);
+}
+.more-item.danger-item:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
 }
 .more-item:hover { background: var(--accent-soft); }
 .more-item i { width: 1.1rem; color: var(--text-muted); text-align: center; }
@@ -4378,4 +4392,222 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
   .hero-pills { gap: 6px; }
   .hero-pills span { padding: 7px 8px; font-size: 0.62rem; }
   .landing-shell { width: calc(100% - 12px); padding-top: 12px; }
+}
+
+
+/* =========================================================
+   Mobile: edge breathing room, compact topbar, stable docks
+   ========================================================= */
+@media (max-width: 700px) {
+  /* ~1rem away from screen edges across the product */
+  .home-view {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-top: 0.75rem;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+  .landing-shell {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    box-sizing: border-box;
+  }
+  .landing-hero,
+  .landing-intent,
+  .landing-meeting-cards,
+  .landing-benefits,
+  .landing-trust-row,
+  .landing-bottom-cta {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .history-view {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+
+  /* Topbar: only logo + Meet + meeting name + ⋮ on mobile */
+  .topbar {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    gap: 0.5rem;
+  }
+  .brand {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  .brand h1 {
+    flex-shrink: 0;
+  }
+  .meeting-name-top {
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.82rem;
+    font-weight: 650;
+  }
+  .meeting-badge,
+  .copy-top,
+  .share-top,
+  .end-top,
+  .leave-btn {
+    display: none !important;
+  }
+  .controls {
+    flex-shrink: 0;
+    gap: 0.15rem !important;
+  }
+  /* Auth buttons already hide into more menu; keep ⋮ only */
+  .auth-area,
+  .user-area .user-label {
+    display: none !important;
+  }
+  .more-menu {
+    right: 0;
+    left: auto;
+    min-width: min(240px, calc(100vw - 2rem));
+    max-height: min(70dvh, 420px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Meeting stage: consistent 1rem gutters + safe bottom for dock */
+  #meetingView.layout:not(.hidden) {
+    max-height: 100%;
+    min-height: 0;
+  }
+  #meetingView .meeting-content {
+    padding: 0.65rem 1rem calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
+    gap: 0.5rem;
+    box-sizing: border-box;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  #meetingView .big-view {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  /* Bottom call dock stays in layout flow — never fixed off-screen */
+  #meetingView .call-controls.toolbar-pill {
+    position: relative !important;
+    inset: auto !important;
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    margin-top: 0.25rem !important;
+    min-height: 56px;
+    height: auto !important;
+    padding: 6px 8px !important;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
+    box-sizing: border-box;
+    z-index: 5;
+  }
+  #meetingView .meeting-more-panel {
+    position: fixed !important;
+    left: 1rem !important;
+    right: 1rem !important;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(60dvh, 480px) !important;
+    z-index: 1300;
+  }
+
+  /* Mobile sheets / drawers: pin to visible viewport bottom */
+  .mobile-sheet {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1400 !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    /* Use dvh so browser chrome doesn't shove the sheet off-screen */
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+  .mobile-sheet-panel {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: min(88dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 12px)) !important;
+    margin: 0 !important;
+    border-radius: 20px 20px 0 0 !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    box-sizing: border-box;
+  }
+  .mobile-sheet-body {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  .chat-sheet-body .chat-form {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Security / generic drawers as bottom sheets with safe area */
+  #securityDrawer.drawer,
+  .drawer {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+  #securityDrawer .drawer-panel,
+  #securityDrawer .security-panel {
+    max-height: min(90dvh, calc(100dvh - env(safe-area-inset-top, 0px))) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    box-sizing: border-box;
+  }
+  #securityDrawer .drawer-body {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Participant context menu sheet */
+  #participantMenu.context-menu,
+  #participantMenu.context-menu.is-sheet {
+    left: 1rem !important;
+    right: 1rem !important;
+    bottom: env(safe-area-inset-bottom, 0px) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(80dvh, calc(100dvh - 2rem)) !important;
+    box-sizing: border-box;
+  }
+
+  /* Modals keep 1rem side inset */
+  .modal-card {
+    width: calc(100% - 2rem) !important;
+    max-width: calc(100% - 2rem) !important;
+    margin-left: 1rem;
+    margin-right: 1rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar {
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
+  }
+  .home-view,
+  .history-view {
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
+  }
+  #meetingView .meeting-content {
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
+  }
+  .meeting-name-top { max-width: 36vw; font-size: 0.78rem; }
 }
