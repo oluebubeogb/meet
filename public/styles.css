@@ -97,6 +97,12 @@ html, body {
 }
 body { overflow: hidden; }
 .hidden { display: none !important; }
+/* Meeting shell must stay fully hidden on home/history even when mobile rules set display:!important */
+#meetingView.hidden,
+#meetingView.layout.hidden,
+main#meetingView.hidden {
+  display: none !important;
+}
 
 body {
   background:
@@ -3502,8 +3508,8 @@ body.dark .meeting-more-panel {
   #resizer {
     display: none !important;
   }
-  .meeting-view,
-  .layout {
+  .meeting-view:not(.hidden),
+  .layout:not(.hidden) {
     display: flex !important;
     flex-direction: column !important;
     grid-template-columns: none !important;
@@ -3928,7 +3934,7 @@ body.dark #meetingView .people-search {
   .topbar .leave-btn { width: 34px; height: 34px; border-radius: 10px; }
   .topbar .more-menu-wrap .icon-btn { width: 34px; height: 34px; }
 
-  #meetingView.layout {
+  #meetingView.layout:not(.hidden) {
     display: flex !important;
     flex-direction: column !important;
     height: 0;
@@ -4261,4 +4267,115 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
 #raisedHandsList,
 #lowerAllHandsBtn {
   display: none !important;
+}
+
+
+/* =========================================================
+   Mobile UX polish — home, forms, safe areas, no UI leaks
+   ========================================================= */
+@media (max-width: 700px) {
+  /* Prevent iOS auto-zoom on focus (requires >=16px) */
+  .form-block input,
+  .auth-form input,
+  .code-inputs input,
+  .people-search,
+  .chat-form input,
+  .chat-form-row input[type="text"],
+  .chat-overlay-form input,
+  .schedule-form input,
+  .name-modal-card .auth-form input,
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* Home/landing: use full viewport height and safe areas; stay scrollable */
+  .home-view {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+  .landing-shell {
+    width: calc(100% - 16px);
+    max-width: 100%;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Hero mock: keep contained; never inherit meeting chrome */
+  .hero-stage {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    min-height: 220px;
+  }
+  .stage-window {
+    width: 100%;
+    max-width: 100%;
+    margin: 0 auto;
+    border-radius: 16px;
+  }
+  .stage-screen {
+    min-height: 200px;
+    max-height: 280px;
+    overflow: hidden;
+  }
+
+  /* Landing action cards: comfortable touch targets */
+  .landing-action-card .landing-main-btn,
+  .landing-action-card .primary-btn {
+    min-height: 48px;
+    width: 100%;
+    justify-content: center;
+  }
+  .landing-action-card .form-block input {
+    min-height: 48px;
+    padding: 0.75rem 0.9rem;
+  }
+  .landing-action-card .checkbox-label {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+  }
+
+  /* Topbar on home: avoid cramped controls */
+  .topbar {
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  /* History view scroll */
+  .history-view {
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Modals full-width sheets feel native */
+  .modal-card {
+    width: calc(100% - 24px);
+    max-width: 100%;
+    max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    margin: auto;
+  }
+
+  /* Code join inputs: larger taps */
+  .code-inputs input {
+    min-height: 48px;
+    min-width: 0;
+    flex: 1;
+  }
+}
+
+@media (max-width: 380px) {
+  .hero-copy h2 { font-size: 2.15rem !important; letter-spacing: -0.04em; }
+  .hero-pills { gap: 6px; }
+  .hero-pills span { padding: 7px 8px; font-size: 0.62rem; }
+  .landing-shell { width: calc(100% - 12px); padding-top: 12px; }
 }
