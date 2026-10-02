@@ -81,9 +81,15 @@
   const SESSION_KEY = 'meet_session';
 
   /** Parse meeting code from path: /ABC-123, /ABC/123, /abc123 */
+  function parseSlugFromPath(pathname) {
+    const path = (pathname || location.pathname || '/').replace(/\/+$/, '') || '/';
+    const m = path.match(/^\/m\/([a-z0-9][a-z0-9-]{8,63})$/i);
+    return m ? m[1].toLowerCase() : null;
+  }
+
   function parseMeetingCodeFromPath(pathname) {
     const path = (pathname || location.pathname || '/').replace(/\/+$/, '') || '/';
-    if (path === '/' || path.startsWith('/api')) return null;
+    if (path === '/' || path.startsWith('/api') || path.startsWith('/m/')) return null;
     // /ABC-123 or /ABC_123
     let m = path.match(/^\/([A-Za-z]{3})[-_](\d{3})$/);
     if (m) return (m[1] + m[2]).toUpperCase();
@@ -2620,12 +2626,24 @@
 
   /** Rejoin from URL (refresh or shared link). Always requires a real display name. */
   async function tryRejoinFromUrl() {
+    const slug = parseSlugFromPath(location.pathname);
+    if (slug) {
+      await showPublicMeeting(slug);
+      return true;
+    }
     const code = parseMeetingCodeFromPath(location.pathname);
     if (!code) return false;
     return joinWithCode(code);
   }
 
   window.addEventListener('popstate', async () => {
+    const slug = parseSlugFromPath(location.pathname);
+    if (slug) {
+      if (currentMeeting) await leaveMeeting();
+      await showPublicMeeting(slug);
+      return;
+    }
+    if ($('publicMeetingView')) $('publicMeetingView').classList.add('hidden');
     const code = parseMeetingCodeFromPath(location.pathname);
     if (code) {
       if (currentMeeting && currentMeeting.code === code) return;
@@ -3743,12 +3761,20 @@
         li.className = 'history-item';
         var start = m.scheduledStart ? new Date(m.scheduledStart).toLocaleString() : '';
         var codeFmt = m.code ? (m.code.slice(0, 3) + '-' + m.code.slice(3)) : '';
+        var price = m.isPaid ? ('₦' + (m.priceNaira || 0)) : 'Free';
+        var ver = m.isPaid ? (' · verify: ' + (m.verificationStatus || 'none')) : '';
+        var income = m.income ? (' · income ₦' + (m.income.grossNaira || 0)) : '';
         li.innerHTML = '<div><strong>' + escapeHtml(m.name) + '</strong> <span class="status-pill ' + escapeHtml(m.status) + '">' + escapeHtml(m.status) + '</span>' +
-          (m.isLive ? ' <span class="status-pill live">in room</span>' : '') + '</div>' +
-          '<div class="history-meta">' + escapeHtml(start) + ' · ' + escapeHtml(codeFmt) + '</div>' +
+          (m.isLive ? ' <span class="status-pill live">in room</span>' : '') +
+          ' <span class="status-pill">' + escapeHtml(m.visibility || 'private') + '</span>' +
+          ' <span class="status-pill">' + escapeHtml(price) + '</span></div>' +
+          '<div class="history-meta">' + escapeHtml(start) + ' · ' + escapeHtml(codeFmt) +
+          (m.slug ? ' · /m/' + escapeHtml(m.slug) : '') + escapeHtml(ver) + escapeHtml(income) + '</div>' +
           '<div class="scheduled-item-actions">' +
           '<button type="button" class="btn small-btn primary-btn" data-start="' + m.id + '">Start</button>' +
           '<button type="button" class="btn small-btn" data-copy="' + escapeHtml(m.link || '') + '">Copy link</button>' +
+          (m.isPaid && m.verificationStatus !== 'paid' ? '<button type="button" class="btn small-btn" data-verify="' + m.id + '">Pay verification</button>' : '') +
+          '<button type="button" class="btn small-btn" data-attendees="' + m.id + '">Attendees</button>' +
           '<button type="button" class="btn small-btn danger-btn" data-del="' + m.id + '">Delete</button></div>';
         list.appendChild(li);
       });
@@ -3764,17 +3790,21 @@
           if (!r.ok) return alert(d.error || 'Failed');
           if ($('historyCloseBtn')) $('historyCloseBtn').click();
           try {
-            var joinRes = await fetch('/api/join', {
+            var createRes = await fetch('/api/create', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: 'Bearer ' + authToken } : {}) },
-              body: JSON.stringify({ code: d.code, participantName: (currentUser && (currentUser.displayName || currentUser.username)) || 'Host', device: detectDevice() })
+              body: JSON.stringify({
+                name: d.name || 'Scheduled meeting',
+                scheduledId: d.scheduledId,
+                participantName: (currentUser && (currentUser.displayName || currentUser.username)) || 'Host',
+                device: detectDevice()
+              })
             });
-            if (joinRes.ok) {
-              location.href = meetingPath(d.code);
+            var created = await createRes.json();
+            if (createRes.ok && created.code) {
+              location.href = meetingPath(created.code);
             } else {
-              var createName = $('createName');
-              if (createName) createName.value = d.name || 'Scheduled meeting';
-              alert('Room not live yet. Create a meeting with the same name and share the new link.');
+              alert(created.error || 'Could not start room');
             }
           } catch (ex) { console.error(ex); }
         });
@@ -3783,6 +3813,58 @@
         btn.addEventListener('click', async function () {
           var link = location.origin + (btn.getAttribute('data-copy') || '');
           try { await navigator.clipboard.writeText(link); } catch (e) { prompt('Link', link); }
+        });
+      });
+      list.querySelectorAll('[data-verify]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var id = btn.getAttribute('data-verify');
+          var r = await fetch('/api/schedule/' + id + '/verify-payment', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + authToken }
+          });
+          var d = await r.json();
+          if (!r.ok) return alert(d.error || 'Failed');
+          if (d.alreadyPaid) { alert('Already verified'); loadScheduled(); return; }
+          if (d.authorizationUrl) location.href = d.authorizationUrl;
+        });
+      });
+      list.querySelectorAll('[data-attendees]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var id = btn.getAttribute('data-attendees');
+          var r = await fetch('/api/schedule/' + id + '/attendees', { headers: { Authorization: 'Bearer ' + authToken } });
+          var d = await r.json();
+          if (!r.ok) return alert(d.error || 'Failed');
+          var detail = $('scheduledDetail');
+          if (!detail) return;
+          if ($('scheduledList')) $('scheduledList').classList.add('hidden');
+          if ($('scheduleForm')) $('scheduleForm').classList.add('hidden');
+          detail.classList.remove('hidden');
+          if ($('scheduledDetailTitle')) $('scheduledDetailTitle').textContent = (d.meeting && d.meeting.name) || 'Meeting';
+          if ($('scheduledDetailMeta')) {
+            $('scheduledDetailMeta').textContent =
+              (d.meeting && d.meeting.isPaid ? 'Paid · ₦' + (d.meeting.priceNaira || 0) : 'Free') +
+              ' · ' + (d.meeting && d.meeting.verificationStatus || '');
+          }
+          if ($('scheduledDetailIncome')) {
+            var inc = d.income || {};
+            var po = d.payout;
+            $('scheduledDetailIncome').textContent =
+              'Income: ₦' + (inc.grossNaira || 0) + ' · ' + (inc.confirmedCount || 0) + ' confirmed' +
+              (po ? (' · payout: ' + po.status + (po.netNaira != null ? ' ₦' + po.netNaira : '')) : '');
+          }
+          var ul = $('scheduledDetailAttendees');
+          if (ul) {
+            ul.innerHTML = '';
+            (d.attendees || []).forEach(function (a) {
+              var li = document.createElement('li');
+              li.textContent = (a.displayName || '') + ' · ' + a.email + ' · ' + a.paymentStatus +
+                (a.amountPaidNaira ? (' · ₦' + a.amountPaidNaira) : '');
+              ul.appendChild(li);
+            });
+            if (!(d.attendees || []).length) {
+              ul.innerHTML = '<li class="history-meta">No registrations yet</li>';
+            }
+          }
         });
       });
       list.querySelectorAll('[data-del]').forEach(function (btn) {
@@ -3795,26 +3877,281 @@
     } catch (e) { console.error(e); }
   }
 
+  if ($('scheduledDetailBack')) $('scheduledDetailBack').addEventListener('click', function () {
+    if ($('scheduledDetail')) $('scheduledDetail').classList.add('hidden');
+    if ($('scheduledList')) $('scheduledList').classList.remove('hidden');
+    if ($('scheduleForm')) $('scheduleForm').classList.remove('hidden');
+  });
+
+  // Auto slug from name
+  if ($('scheduleName')) $('scheduleName').addEventListener('input', function () {
+    var slugEl = $('scheduleSlug');
+    if (!slugEl || slugEl.dataset.touched === '1') return;
+    var s = (this.value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (s.length < 10) s = (s + '-meeting').slice(0, 48);
+    slugEl.value = s;
+  });
+  if ($('scheduleSlug')) $('scheduleSlug').addEventListener('input', function () {
+    this.dataset.touched = '1';
+  });
+  if ($('schedulePricing')) $('schedulePricing').addEventListener('change', function () {
+    var paid = this.value === 'paid';
+    if ($('schedulePrice')) $('schedulePrice').classList.toggle('hidden', !paid);
+    if ($('schedulePayoutWrap')) $('schedulePayoutWrap').classList.toggle('hidden', !paid);
+  });
+
+  async function loadPayoutAccountsIntoSelect() {
+    if (!authToken) return;
+    try {
+      var res = await fetch('/api/payout-accounts', { headers: { Authorization: 'Bearer ' + authToken } });
+      var data = await res.json();
+      var sel = $('schedulePayoutAccount');
+      var list = $('payoutAccountsList');
+      if (sel) {
+        sel.innerHTML = '<option value="">Select account…</option>';
+        (data.accounts || []).forEach(function (a) {
+          var opt = document.createElement('option');
+          opt.value = a.id;
+          opt.textContent = (a.accountName || 'Account') + ' · ' + a.accountNumber + (a.bankName ? ' (' + a.bankName + ')' : '');
+          sel.appendChild(opt);
+        });
+      }
+      if (list) {
+        list.innerHTML = '';
+        (data.accounts || []).forEach(function (a) {
+          var li = document.createElement('li');
+          li.className = 'history-item';
+          li.innerHTML = '<div><strong>' + escapeHtml(a.accountName || '') + '</strong></div>' +
+            '<div class="history-meta">' + escapeHtml(a.bankName || a.bankCode) + ' · ' + escapeHtml(a.accountNumber) + '</div>';
+          list.appendChild(li);
+        });
+      }
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadBanks() {
+    var sel = $('payoutBank');
+    if (!sel || sel.options.length > 1) return;
+    try {
+      var res = await fetch('/api/payout-accounts/banks');
+      if (!res.ok) return;
+      var data = await res.json();
+      (data.banks || []).forEach(function (b) {
+        var opt = document.createElement('option');
+        opt.value = b.code;
+        opt.textContent = b.name;
+        sel.appendChild(opt);
+      });
+    } catch (e) {}
+  }
+
+  // when opening scheduled tab, load accounts
+  document.querySelectorAll('.history-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      if (tab.getAttribute('data-tab') === 'scheduled') {
+        loadPayoutAccountsIntoSelect();
+        loadBanks();
+      }
+    });
+  });
+
+  if ($('payoutAccountForm')) $('payoutAccountForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var err = $('payoutAccountError');
+    if (err) err.classList.add('hidden');
+    if (!authToken) return;
+    var bankCode = $('payoutBank') && $('payoutBank').value;
+    var accountNumber = $('payoutAccountNumber') && $('payoutAccountNumber').value;
+    var bankName = $('payoutBank') && $('payoutBank').selectedOptions[0] && $('payoutBank').selectedOptions[0].textContent;
+    try {
+      var res = await fetch('/api/payout-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+        body: JSON.stringify({ bankCode: bankCode, accountNumber: accountNumber, bankName: bankName })
+      });
+      var data = await res.json();
+      if (!res.ok) { if (err) { err.textContent = data.error || 'Failed'; err.classList.remove('hidden'); } return; }
+      if ($('payoutAccountNumber')) $('payoutAccountNumber').value = '';
+      loadPayoutAccountsIntoSelect();
+    } catch (ex) {
+      if (err) { err.textContent = ex.message; err.classList.remove('hidden'); }
+    }
+  });
+
   if ($('scheduleForm')) $('scheduleForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     var err = $('scheduleError');
     if (err) err.classList.add('hidden');
     if (!authToken) { if (err) { err.textContent = 'Log in to schedule'; err.classList.remove('hidden'); } return; }
     var name = ($('scheduleName') && $('scheduleName').value.trim()) || 'Scheduled meeting';
+    var slug = $('scheduleSlug') && $('scheduleSlug').value.trim();
     var start = $('scheduleStart') && $('scheduleStart').value;
     var end = $('scheduleEnd') && $('scheduleEnd').value;
+    var visibility = ($('scheduleVisibility') && $('scheduleVisibility').value) || 'private';
+    var isPaid = $('schedulePricing') && $('schedulePricing').value === 'paid';
+    var priceNaira = $('schedulePrice') && $('schedulePrice').value ? Number($('schedulePrice').value) : null;
+    var payoutAccountId = $('schedulePayoutAccount') && $('schedulePayoutAccount').value ? Number($('schedulePayoutAccount').value) : null;
+    var description = $('scheduleDescription') && $('scheduleDescription').value;
     if (!start) return;
+    if (slug && slug.length < 10) {
+      if (err) { err.textContent = 'Slug must be at least 10 characters'; err.classList.remove('hidden'); }
+      return;
+    }
     try {
       var res = await fetch('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
-        body: JSON.stringify({ name: name, scheduledStart: new Date(start).toISOString(), scheduledEnd: end ? new Date(end).toISOString() : null })
+        body: JSON.stringify({
+          name: name,
+          slug: slug || undefined,
+          scheduledStart: new Date(start).toISOString(),
+          scheduledEnd: end ? new Date(end).toISOString() : null,
+          visibility: visibility,
+          isPaid: isPaid,
+          priceNaira: isPaid ? priceNaira : undefined,
+          payoutAccountId: isPaid ? payoutAccountId : undefined,
+          description: description || undefined
+        })
       });
       var data = await res.json();
       if (!res.ok) { if (err) { err.textContent = data.error || 'Failed'; err.classList.remove('hidden'); } return; }
       if ($('scheduleName')) $('scheduleName').value = '';
+      if ($('scheduleSlug')) { $('scheduleSlug').value = ''; $('scheduleSlug').dataset.touched = ''; }
+      if ($('scheduleDescription')) $('scheduleDescription').value = '';
       loadScheduled();
+      if (isPaid && data.verificationStatus !== 'paid') {
+        if (confirm('Paid meeting created. Pay verification fee now to activate ticket sales?')) {
+          var vr = await fetch('/api/schedule/' + data.id + '/verify-payment', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + authToken }
+          });
+          var vd = await vr.json();
+          if (vr.ok && vd.authorizationUrl) location.href = vd.authorizationUrl;
+          else if (!vr.ok) alert(vd.error || 'Verification payment failed');
+        }
+      }
     } catch (ex) { if (err) { err.textContent = ex.message; err.classList.remove('hidden'); } }
+  });
+
+  // ----- Public search -----
+  if ($('publicSearchForm')) $('publicSearchForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var q = ($('publicSearchInput') && $('publicSearchInput').value) || '';
+    var box = $('publicSearchResults');
+    if (!box) return;
+    try {
+      var res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      var data = await res.json();
+      box.innerHTML = '';
+      box.classList.remove('hidden');
+      (data.meetings || []).forEach(function (m) {
+        var li = document.createElement('li');
+        li.innerHTML = '<a href="' + escapeHtml(m.link || ('/m/' + m.slug)) + '"><strong>' + escapeHtml(m.name) + '</strong></a> ' +
+          (m.isPaid ? ('₦' + m.priceNaira) : 'Free') + ' · ' + (m.scheduledStart ? new Date(m.scheduledStart).toLocaleString() : '');
+        box.appendChild(li);
+      });
+      if (!(data.meetings || []).length) {
+        box.innerHTML = '<li class="history-meta">No public meetings found</li>';
+      }
+    } catch (ex) { console.error(ex); }
+  });
+
+  // ----- Public meeting page /m/slug -----
+  async function showPublicMeeting(slug) {
+    var view = $('publicMeetingView');
+    if (!view) return;
+    if (homeView) homeView.classList.add('hidden');
+    if ($('historyView')) $('historyView').classList.add('hidden');
+    view.classList.remove('hidden');
+    try {
+      var res = await fetch('/api/m/' + encodeURIComponent(slug));
+      var m = await res.json();
+      if (!res.ok) {
+        if ($('pmTitle')) $('pmTitle').textContent = 'Not found';
+        if ($('pmError')) { $('pmError').textContent = m.error || 'Not found'; $('pmError').classList.remove('hidden'); }
+        return;
+      }
+      if ($('pmTitle')) $('pmTitle').textContent = m.name || 'Meeting';
+      if ($('pmMeta')) {
+        $('pmMeta').textContent =
+          (m.scheduledStart ? new Date(m.scheduledStart).toLocaleString() : '') +
+          (m.hostDisplayName ? ' · Host: ' + m.hostDisplayName : '') +
+          (m.isLive ? ' · LIVE' : '');
+      }
+      if ($('pmDesc')) $('pmDesc').textContent = m.description || '';
+      if ($('pmPrice')) {
+        $('pmPrice').textContent = m.isPaid
+          ? ('Ticket: ₦' + (m.priceNaira || 0) + (m.verificationRequired ? ' (sales not active yet)' : ''))
+          : 'Free registration';
+      }
+      if ($('pmRegisterBtn')) {
+        $('pmRegisterBtn').textContent = m.isPaid ? ('Pay ₦' + (m.priceNaira || 0)) : 'Register';
+        $('pmRegisterBtn').disabled = !!m.verificationRequired;
+      }
+      window.__publicMeetingSlug = slug;
+      window.__publicMeetingMeta = m;
+      if (m.isLive && m.code && ($('pmSuccess') && !$('pmSuccess').classList.contains('hidden'))) {
+        if ($('pmJoinBtn')) {
+          $('pmJoinBtn').classList.remove('hidden');
+          $('pmJoinBtn').onclick = function () { location.href = meetingPath(m.code); };
+        }
+      }
+    } catch (e) {
+      if ($('pmError')) { $('pmError').textContent = e.message; $('pmError').classList.remove('hidden'); }
+    }
+  }
+
+  if ($('pmBackBtn')) $('pmBackBtn').addEventListener('click', function () {
+    if ($('publicMeetingView')) $('publicMeetingView').classList.add('hidden');
+    history.pushState({}, '', '/');
+    if (homeView) homeView.classList.remove('hidden');
+  });
+
+  if ($('pmRegisterForm')) $('pmRegisterForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var slug = window.__publicMeetingSlug;
+    if (!slug) return;
+    var err = $('pmError');
+    var ok = $('pmSuccess');
+    if (err) err.classList.add('hidden');
+    if (ok) ok.classList.add('hidden');
+    var email = $('pmEmail') && $('pmEmail').value.trim();
+    var name = $('pmName') && $('pmName').value.trim();
+    try {
+      var res = await fetch('/api/m/' + encodeURIComponent(slug) + '/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: 'Bearer ' + authToken } : {})
+        },
+        body: JSON.stringify({ email: email, displayName: name })
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        if (err) { err.textContent = data.error || 'Failed'; err.classList.remove('hidden'); }
+        return;
+      }
+      if (data.authorizationUrl) {
+        location.href = data.authorizationUrl;
+        return;
+      }
+      if (ok) {
+        ok.textContent = data.alreadyRegistered
+          ? 'You are already registered. You can join when the meeting is live.'
+          : 'Registered successfully. Join when the host starts the meeting.';
+        ok.classList.remove('hidden');
+      }
+      try {
+        localStorage.setItem('meet_reg_' + slug, JSON.stringify({ email: email, registrationId: data.registrationId }));
+      } catch (_) {}
+      var meta = window.__publicMeetingMeta;
+      if (meta && meta.isLive && meta.code && $('pmJoinBtn')) {
+        $('pmJoinBtn').classList.remove('hidden');
+        $('pmJoinBtn').onclick = function () { location.href = meetingPath(meta.code); };
+      }
+    } catch (ex) {
+      if (err) { err.textContent = ex.message; err.classList.remove('hidden'); }
+    }
   });
 
   if ($('localMediaVideo')) $('localMediaVideo').addEventListener('timeupdate', function () {

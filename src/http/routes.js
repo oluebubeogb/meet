@@ -41,6 +41,8 @@ const { endMeeting } = require('../rooms/lifecycle');
 const { createLiveKitToken, isLiveKitConfigured, grantsFromPermissions } = require('../livekit/tokens');
 const { signWsCredential } = require('../lib/wsCredential');
 const { features } = require('../lib/features');
+const paystack = require('../lib/paystack');
+const { schedulePayoutForMeeting } = require('../lib/payouts');
 
 const {
   PORT,
@@ -51,7 +53,59 @@ const {
   ACCOUNTS_URL,
   ACCOUNTS_JWT_SECRET,
   MIME,
+  MEETING_VERIFICATION_FEE_NAIRA,
+  PAYOUT_DELAY_DAYS,
+  PLATFORM_FEE_PERCENT,
+  PAYSTACK_PUBLIC_KEY,
 } = config;
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => {
+      chunks.push(c);
+      if (chunks.reduce((n, x) => n + x.length, 0) > 2e6) {
+        req.destroy();
+        reject(new Error('Body too large'));
+      }
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function mapScheduledRow(r, meetingsMap) {
+  const income = db.getMeetingIncome(r.id);
+  return {
+    id: r.id,
+    code: r.code,
+    slug: r.slug,
+    name: r.name,
+    description: r.description,
+    scheduledStart: r.scheduled_start,
+    scheduledEnd: r.scheduled_end,
+    status: r.status,
+    createdAt: r.created_at,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    visibility: r.visibility || 'private',
+    isPaid: !!r.is_paid,
+    priceKobo: r.price_kobo,
+    priceNaira: r.price_kobo != null ? r.price_kobo / 100 : null,
+    payoutAccountId: r.payout_account_id,
+    verificationStatus: r.verification_status || 'none',
+    verificationPaidAt: r.verification_paid_at,
+    link: r.slug ? `/m/${r.slug}` : `/${r.code.slice(0, 3)}-${r.code.slice(3)}`,
+    codeLink: `/${r.code.slice(0, 3)}-${r.code.slice(3)}`,
+    isLive: meetingsMap ? meetingsMap.has(r.code) : false,
+    income: {
+      registrationCount: income.registrationCount,
+      confirmedCount: income.confirmedCount,
+      grossKobo: income.grossKobo,
+      grossNaira: (income.grossKobo || 0) / 100,
+    },
+  };
+}
 
 function createRequestHandler() {
   return async function handleRequest(req, res) {
@@ -84,6 +138,11 @@ function createRequestHandler() {
       livekitUrl: LIVEKIT_URL || null,
       livekitConfigured: !!(LIVEKIT_URL && LIVEKIT_API_KEY && LIVEKIT_API_SECRET),
       features,
+      paystackPublicKey: paystack.isConfigured() ? (PAYSTACK_PUBLIC_KEY || paystack.publicKey()) : null,
+      paystackEnabled: paystack.isConfigured(),
+      meetingVerificationFeeNaira: MEETING_VERIFICATION_FEE_NAIRA,
+      payoutDelayDays: PAYOUT_DELAY_DAYS,
+      platformFeePercent: PLATFORM_FEE_PERCENT,
     });
   }
 
@@ -370,7 +429,13 @@ function createRequestHandler() {
       if (name.length > 60) return sendJSON(res, 400, { error: 'Meeting name too long' });
 
       const authUser = await getAuthUser(req);
-      const code = generateCode();
+      let code = generateCode();
+      if (body.scheduledId) {
+        const sched = db.getScheduledById(body.scheduledId);
+        if (sched && (!authUser || sched.host_user_id === authUser.id)) {
+          code = sched.code;
+        }
+      }
       const hostId = body.participantId || 'host-' + Date.now();
       const hostName = normalizeParticipantName(
         body.participantName
@@ -511,6 +576,37 @@ function createRequestHandler() {
 
       const meeting = meetings.get(code);
       if (!meeting) return sendJSON(res, 404, { error: 'Meeting not found. Check the code.' });
+
+      // Registration gate for scheduled meetings — host bypasses
+      const scheduledRow = db.getScheduledByCode(code);
+      if (scheduledRow) {
+        const authPreview = await getAuthUser(req);
+        const isHost =
+          (authPreview && scheduledRow.host_user_id === authPreview.id) ||
+          (meeting.hostUserId && authPreview && meeting.hostUserId === authPreview.id) ||
+          (meeting.hostId && body.participantId && meeting.hostId === body.participantId);
+        if (!isHost) {
+          const email = (body.email || authPreview?.email || '').trim().toLowerCase();
+          const access = db.checkRegistrationAccess(scheduledRow, {
+            email: email || null,
+            userId: authPreview?.id || null,
+          });
+          if (!access.ok) {
+            return sendJSON(res, 403, {
+              error: access.reason || 'Registration required',
+              requiresRegistration: true,
+              slug: scheduledRow.slug,
+              isPaid: !!scheduledRow.is_paid,
+              priceNaira: scheduledRow.price_kobo != null ? scheduledRow.price_kobo / 100 : null,
+            });
+          }
+          if (access.registration && !access.registration.joined_at) {
+            try {
+              db.markRegistrationJoined(access.registration.id, body.participantId || null);
+            } catch (_) {}
+          }
+        }
+      }
 
       // Secure invite key enforcement
       const providedKey = body.key || body.inviteToken || null;
@@ -769,6 +865,40 @@ function createRequestHandler() {
         if (Number.isNaN(endDate.getTime())) scheduledEnd = null;
         else scheduledEnd = endDate.toISOString();
       }
+
+      const visibility = body.visibility === 'public' ? 'public' : 'private';
+      const isPaid = !!(body.isPaid || body.paid);
+      let priceKobo = null;
+      if (isPaid) {
+        const naira = Number(body.priceNaira != null ? body.priceNaira : body.price);
+        if (!Number.isFinite(naira) || naira < 100) {
+          return sendJSON(res, 400, { error: 'Paid meetings require priceNaira of at least 100' });
+        }
+        priceKobo = Math.round(naira * 100);
+        if (!paystack.isConfigured()) {
+          return sendJSON(res, 503, { error: 'Payments not configured on this server' });
+        }
+      }
+
+      let payoutAccountId = body.payoutAccountId || null;
+      if (isPaid) {
+        if (!payoutAccountId) {
+          return sendJSON(res, 400, { error: 'Select a payout account for paid meetings' });
+        }
+        const acc = db.getPayoutAccountById(payoutAccountId);
+        if (!acc || acc.user_id !== authUser.id || acc.status !== 'active') {
+          return sendJSON(res, 400, { error: 'Invalid payout account' });
+        }
+        if (!acc.paystack_recipient_code) {
+          return sendJSON(res, 400, { error: 'Payout account is missing Paystack recipient — re-add the account' });
+        }
+      }
+
+      let slug = body.slug ? String(body.slug).trim() : null;
+      if (slug && slug.length < 10) {
+        return sendJSON(res, 400, { error: 'Slug must be at least 10 characters' });
+      }
+
       const code = generateCode();
       const row = db.createScheduledMeeting({
         code,
@@ -777,16 +907,14 @@ function createRequestHandler() {
         hostDisplayName: authUser.displayName || authUser.username || null,
         scheduledStart: startDate.toISOString(),
         scheduledEnd,
+        slug,
+        visibility,
+        isPaid,
+        priceKobo,
+        description: body.description ? String(body.description).slice(0, 500) : null,
+        payoutAccountId: isPaid ? payoutAccountId : null,
       });
-      return sendJSON(res, 201, {
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        scheduledStart: row.scheduled_start,
-        scheduledEnd: row.scheduled_end,
-        status: row.status,
-        link: `/${row.code.slice(0, 3)}-${row.code.slice(3)}`,
-      });
+      return sendJSON(res, 201, mapScheduledRow(row, meetings));
     } catch (e) {
       console.error('[schedule]', e);
       return sendJSON(res, 400, { error: e.message || 'Bad request' });
@@ -799,22 +927,101 @@ function createRequestHandler() {
       if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
       const rows = db.getScheduledForUser(authUser.id, 50);
       return sendJSON(res, 200, {
-        meetings: rows.map((r) => ({
-          id: r.id,
-          code: r.code,
-          name: r.name,
-          scheduledStart: r.scheduled_start,
-          scheduledEnd: r.scheduled_end,
-          status: r.status,
-          createdAt: r.created_at,
-          startedAt: r.started_at,
-          endedAt: r.ended_at,
-          link: `/${r.code.slice(0, 3)}-${r.code.slice(3)}`,
-          isLive: meetings.has(r.code),
-        })),
+        meetings: rows.map((r) => mapScheduledRow(r, meetings)),
       });
     } catch (e) {
       return sendJSON(res, 500, { error: e.message || 'Failed' });
+    }
+  }
+
+  if (urlPath.match(/^\/api\/schedule\/\d+\/attendees$/) && req.method === 'GET') {
+    try {
+      const authUser = await getAuthUser(req);
+      if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
+      const id = parseInt(urlPath.split('/')[3], 10);
+      const row = db.getScheduledById(id);
+      if (!row || row.host_user_id !== authUser.id) return sendJSON(res, 404, { error: 'Not found' });
+      const regs = db.listRegistrationsForMeeting(id);
+      const income = db.getMeetingIncome(id);
+      const payout = db.getPayoutForMeeting(id);
+      return sendJSON(res, 200, {
+        meeting: mapScheduledRow(row, meetings),
+        attendees: regs.map((r) => ({
+          id: r.id,
+          email: r.email,
+          displayName: r.display_name,
+          paymentStatus: r.payment_status,
+          amountPaidKobo: r.amount_paid_kobo,
+          amountPaidNaira: (r.amount_paid_kobo || 0) / 100,
+          joinedAt: r.joined_at,
+          createdAt: r.created_at,
+        })),
+        income: {
+          registrationCount: income.registrationCount,
+          confirmedCount: income.confirmedCount,
+          grossKobo: income.grossKobo,
+          grossNaira: (income.grossKobo || 0) / 100,
+        },
+        payout: payout
+          ? {
+              status: payout.status,
+              netKobo: payout.net_kobo,
+              netNaira: (payout.net_kobo || 0) / 100,
+              eligibleAt: payout.eligible_at,
+              transferredAt: payout.transferred_at,
+              errorMessage: payout.error_message,
+            }
+          : null,
+      });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message || 'Failed' });
+    }
+  }
+
+  if (urlPath.match(/^\/api\/schedule\/\d+\/verify-payment$/) && req.method === 'POST') {
+    try {
+      const authUser = await getAuthUser(req);
+      if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
+      if (!paystack.isConfigured()) return sendJSON(res, 503, { error: 'Payments not configured' });
+      const id = parseInt(urlPath.split('/')[3], 10);
+      const row = db.getScheduledById(id);
+      if (!row || row.host_user_id !== authUser.id) return sendJSON(res, 404, { error: 'Not found' });
+      if (!row.is_paid) return sendJSON(res, 400, { error: 'Only paid meetings require verification' });
+      if (row.verification_status === 'paid') {
+        return sendJSON(res, 200, { alreadyPaid: true, verificationStatus: 'paid' });
+      }
+      const email = authUser.email;
+      if (!email || !isValidEmail(email)) {
+        return sendJSON(res, 400, { error: 'A valid account email is required to pay verification fee' });
+      }
+      const amountKobo = Math.round(MEETING_VERIFICATION_FEE_NAIRA * 100);
+      const reference = paystack.newReference('mver');
+      const origin = (req.headers['x-forwarded-proto'] || 'http') + '://' + (req.headers.host || 'localhost');
+      const init = await paystack.initializeTransaction({
+        email,
+        amountKobo,
+        reference,
+        callbackUrl: origin + '/m/' + (row.slug || row.code) + '?verified=1',
+        metadata: {
+          type: 'meeting_verification',
+          scheduledMeetingId: row.id,
+          hostUserId: authUser.id,
+        },
+      });
+      db.setMeetingVerification(row.id, {
+        status: 'pending',
+        reference,
+        amountKobo,
+      });
+      return sendJSON(res, 200, {
+        authorizationUrl: init.authorization_url,
+        accessCode: init.access_code,
+        reference,
+        amountNaira: MEETING_VERIFICATION_FEE_NAIRA,
+      });
+    } catch (e) {
+      console.error('[verify-payment]', e);
+      return sendJSON(res, 400, { error: e.message || 'Failed to start verification payment' });
     }
   }
 
@@ -845,9 +1052,344 @@ function createRequestHandler() {
         code: row.code,
         name: row.name,
         scheduledId: row.id,
+        slug: row.slug,
       });
     } catch (e) {
       return sendJSON(res, 400, { error: e.message || 'Bad request' });
+    }
+  }
+
+  // ----- Public search -----
+  if (urlPath === '/api/search' && req.method === 'GET') {
+    try {
+      const q = parsed.searchParams.get('q') || '';
+      const rows = db.searchPublicScheduled(q, 30);
+      return sendJSON(res, 200, {
+        meetings: rows.map((r) => ({
+          id: r.id,
+          slug: r.slug,
+          name: r.name,
+          description: r.description,
+          scheduledStart: r.scheduled_start,
+          scheduledEnd: r.scheduled_end,
+          isPaid: !!r.is_paid,
+          priceNaira: r.price_kobo != null ? r.price_kobo / 100 : null,
+          status: r.status,
+          link: r.slug ? '/m/' + r.slug : null,
+          isLive: meetings.has(r.code),
+        })),
+      });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message || 'Search failed' });
+    }
+  }
+
+  // ----- Public meeting by slug -----
+  if (urlPath.startsWith('/api/m/') && req.method === 'GET' && !urlPath.includes('/register')) {
+    try {
+      const slug = decodeURIComponent(urlPath.slice('/api/m/'.length).split('/')[0]);
+      const row = db.getScheduledBySlug(slug);
+      if (!row) return sendJSON(res, 404, { error: 'Meeting not found' });
+      return sendJSON(res, 200, {
+        id: row.id,
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        scheduledStart: row.scheduled_start,
+        scheduledEnd: row.scheduled_end,
+        status: row.status,
+        visibility: row.visibility,
+        isPaid: !!row.is_paid,
+        priceNaira: row.price_kobo != null ? row.price_kobo / 100 : null,
+        hostDisplayName: row.host_display_name,
+        isLive: meetings.has(row.code),
+        code: row.status === 'live' || meetings.has(row.code) ? row.code : undefined,
+        verificationRequired: !!row.is_paid && row.verification_status !== 'paid',
+      });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message || 'Failed' });
+    }
+  }
+
+  // ----- Register (free or start paid ticket) -----
+  if (urlPath.match(/^\/api\/m\/[^/]+\/register$/) && req.method === 'POST') {
+    try {
+      const slug = decodeURIComponent(urlPath.split('/')[3]);
+      const row = db.getScheduledBySlug(slug);
+      if (!row) return sendJSON(res, 404, { error: 'Meeting not found' });
+      if (row.status === 'ended') return sendJSON(res, 400, { error: 'This meeting has ended' });
+      if (row.is_paid && row.verification_status !== 'paid') {
+        return sendJSON(res, 403, { error: 'Host has not activated this paid meeting yet' });
+      }
+
+      const body = await parseBody(req);
+      const authUser = await getAuthUser(req);
+      const email = String(body.email || authUser?.email || '').trim().toLowerCase();
+      const displayName = String(body.displayName || body.name || authUser?.displayName || authUser?.username || '').trim().slice(0, 60);
+
+      if (!email || !isValidEmail(email)) {
+        return sendJSON(res, 400, { error: 'Valid email is required' });
+      }
+      if (!displayName || displayName.length < 2) {
+        return sendJSON(res, 400, { error: 'Display name is required' });
+      }
+
+      const existingEmail = db.getRegistrationForMeetingEmail(row.id, email);
+      if (existingEmail && (existingEmail.payment_status === 'success' || existingEmail.payment_status === 'free')) {
+        return sendJSON(res, 200, {
+          alreadyRegistered: true,
+          registrationId: existingEmail.id,
+          paymentStatus: existingEmail.payment_status,
+          canJoin: true,
+        });
+      }
+      if (authUser?.id) {
+        const existingUser = db.getRegistrationForMeetingUser(row.id, authUser.id);
+        if (existingUser && existingUser.email !== email && (existingUser.payment_status === 'success' || existingUser.payment_status === 'free')) {
+          return sendJSON(res, 409, {
+            error: 'This account is already registered for this meeting with a different email',
+          });
+        }
+      }
+
+      if (!row.is_paid) {
+        let reg = existingEmail;
+        if (!reg) {
+          try {
+            reg = db.createRegistration({
+              scheduledMeetingId: row.id,
+              userId: authUser?.id || null,
+              email,
+              displayName,
+              amountPaidKobo: 0,
+              paymentStatus: 'free',
+            });
+          } catch (e) {
+            if (/UNIQUE/i.test(e.message)) {
+              reg = db.getRegistrationForMeetingEmail(row.id, email);
+            } else throw e;
+          }
+        } else {
+          reg = db.updateRegistrationPayment(reg.id, { paymentStatus: 'free' });
+        }
+        return sendJSON(res, 201, {
+          registrationId: reg.id,
+          paymentStatus: 'free',
+          canJoin: true,
+        });
+      }
+
+      if (!paystack.isConfigured()) return sendJSON(res, 503, { error: 'Payments not configured' });
+      const amountKobo = row.price_kobo || 0;
+      if (amountKobo < 10000) return sendJSON(res, 400, { error: 'Invalid ticket price' });
+
+      let reg = existingEmail;
+      const reference = paystack.newReference('tkt');
+      if (!reg) {
+        try {
+          reg = db.createRegistration({
+            scheduledMeetingId: row.id,
+            userId: authUser?.id || null,
+            email,
+            displayName,
+            amountPaidKobo: amountKobo,
+            paystackReference: reference,
+            paymentStatus: 'pending',
+          });
+        } catch (e) {
+          if (/UNIQUE/i.test(e.message)) {
+            reg = db.getRegistrationForMeetingEmail(row.id, email);
+          } else throw e;
+        }
+      } else if (reg.payment_status === 'pending') {
+        db.updateRegistrationPayment(reg.id, { paystackReference: reference, amountPaidKobo: amountKobo });
+      } else {
+        return sendJSON(res, 200, {
+          alreadyRegistered: true,
+          registrationId: reg.id,
+          paymentStatus: reg.payment_status,
+          canJoin: reg.payment_status === 'success',
+        });
+      }
+
+      const origin = (req.headers['x-forwarded-proto'] || 'http') + '://' + (req.headers.host || 'localhost');
+      const init = await paystack.initializeTransaction({
+        email,
+        amountKobo,
+        reference: reg.paystack_reference || reference,
+        callbackUrl: origin + '/m/' + row.slug + '?paid=1',
+        metadata: {
+          type: 'ticket',
+          scheduledMeetingId: row.id,
+          registrationId: reg.id,
+        },
+      });
+      return sendJSON(res, 200, {
+        registrationId: reg.id,
+        paymentStatus: 'pending',
+        authorizationUrl: init.authorization_url,
+        accessCode: init.access_code,
+        reference: reg.paystack_reference || reference,
+        amountNaira: amountKobo / 100,
+      });
+    } catch (e) {
+      console.error('[register]', e);
+      return sendJSON(res, 400, { error: e.message || 'Registration failed' });
+    }
+  }
+
+  // ----- Payout accounts -----
+  if (urlPath === '/api/payout-accounts/banks' && req.method === 'GET') {
+    try {
+      if (!paystack.isConfigured()) return sendJSON(res, 503, { error: 'Payments not configured' });
+      const banks = await paystack.listBanks();
+      return sendJSON(res, 200, {
+        banks: (banks || []).map((b) => ({ name: b.name, code: b.code, slug: b.slug })),
+      });
+    } catch (e) {
+      return sendJSON(res, 502, { error: e.message || 'Failed to list banks' });
+    }
+  }
+
+  if (urlPath === '/api/payout-accounts' && req.method === 'GET') {
+    try {
+      const authUser = await getAuthUser(req);
+      if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
+      const rows = db.getPayoutAccountsForUser(authUser.id);
+      return sendJSON(res, 200, {
+        accounts: rows.map((a) => ({
+          id: a.id,
+          bankCode: a.bank_code,
+          bankName: a.bank_name,
+          accountNumber: a.account_number,
+          accountName: a.account_name,
+          hasRecipient: !!a.paystack_recipient_code,
+          createdAt: a.created_at,
+        })),
+      });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message || 'Failed' });
+    }
+  }
+
+  if (urlPath === '/api/payout-accounts' && req.method === 'POST') {
+    try {
+      const authUser = await getAuthUser(req);
+      if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
+      if (!paystack.isConfigured()) return sendJSON(res, 503, { error: 'Payments not configured' });
+      const body = await parseBody(req);
+      const bankCode = String(body.bankCode || '').trim();
+      const accountNumber = String(body.accountNumber || '').replace(/\D/g, '');
+      if (!bankCode || accountNumber.length < 10) {
+        return sendJSON(res, 400, { error: 'bankCode and valid accountNumber required' });
+      }
+      let accountName = body.accountName || null;
+      let bankName = body.bankName || null;
+      try {
+        const resolved = await paystack.resolveAccountNumber(accountNumber, bankCode);
+        accountName = resolved.account_name || accountName;
+      } catch (e) {
+        return sendJSON(res, 400, { error: e.message || 'Could not resolve account number' });
+      }
+      const recipient = await paystack.createTransferRecipient({
+        name: accountName || authUser.username || 'Host',
+        accountNumber,
+        bankCode,
+      });
+      const row = db.createPayoutAccount({
+        userId: authUser.id,
+        bankCode,
+        bankName,
+        accountNumber,
+        accountName,
+        recipientCode: recipient.recipient_code,
+      });
+      return sendJSON(res, 201, {
+        id: row.id,
+        bankCode: row.bank_code,
+        bankName: row.bank_name,
+        accountNumber: row.account_number,
+        accountName: row.account_name,
+        hasRecipient: true,
+      });
+    } catch (e) {
+      console.error('[payout-accounts]', e);
+      return sendJSON(res, 400, { error: e.message || 'Failed to add account' });
+    }
+  }
+
+  if (urlPath.match(/^\/api\/payout-accounts\/\d+$/) && req.method === 'DELETE') {
+    try {
+      const authUser = await getAuthUser(req);
+      if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
+      const id = parseInt(urlPath.split('/').pop(), 10);
+      db.deletePayoutAccount(id, authUser.id);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message || 'Failed' });
+    }
+  }
+
+  // ----- Paystack webhook -----
+  if (urlPath === '/api/webhooks/paystack' && req.method === 'POST') {
+    try {
+      const raw = await readRawBody(req);
+      const sig = req.headers['x-paystack-signature'];
+      if (!paystack.verifyWebhookSignature(raw, sig)) {
+        return sendJSON(res, 401, { error: 'Invalid signature' });
+      }
+      const event = JSON.parse(raw.toString('utf8'));
+      const eventName = event.event;
+      const data = event.data || {};
+
+      if (eventName === 'charge.success') {
+        const meta = data.metadata || {};
+        const reference = data.reference;
+        if (meta.type === 'meeting_verification' && meta.scheduledMeetingId) {
+          db.setMeetingVerification(Number(meta.scheduledMeetingId), {
+            status: 'paid',
+            reference,
+            amountKobo: data.amount,
+            paidAt: new Date().toISOString(),
+          });
+          console.log('[webhook] meeting verification paid', meta.scheduledMeetingId);
+        } else if (meta.type === 'ticket' && meta.registrationId) {
+          db.updateRegistrationPayment(Number(meta.registrationId), {
+            paymentStatus: 'success',
+            amountPaidKobo: data.amount,
+            paystackReference: reference,
+          });
+          console.log('[webhook] ticket paid registration', meta.registrationId);
+        } else if (reference) {
+          const reg = db.getRegistrationByReference(reference);
+          if (reg) {
+            db.updateRegistrationPayment(reg.id, {
+              paymentStatus: 'success',
+              amountPaidKobo: data.amount,
+              paystackReference: reference,
+            });
+          }
+        }
+      }
+
+      if (eventName === 'transfer.success' || eventName === 'transfer.failed') {
+        const reference = data.reference;
+        if (reference) {
+          const payout = db.db.prepare('SELECT * FROM meeting_payouts WHERE paystack_reference = ?').get(reference);
+          if (payout) {
+            db.updateMeetingPayout(payout.id, {
+              status: eventName === 'transfer.success' ? 'success' : 'failed',
+              transferredAt: eventName === 'transfer.success' ? new Date().toISOString() : null,
+              errorMessage: eventName === 'transfer.failed' ? (data.reason || 'Transfer failed') : null,
+            });
+          }
+        }
+      }
+
+      return sendJSON(res, 200, { received: true });
+    } catch (e) {
+      console.error('[webhook paystack]', e);
+      return sendJSON(res, 500, { error: 'Webhook handler error' });
     }
   }
 

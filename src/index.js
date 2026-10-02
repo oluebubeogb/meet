@@ -50,6 +50,20 @@ function start() {
       `[meeting] inactivity cleanup every ${config.MEETING_CLEANUP_INTERVAL_MS / 60000} min ` +
         `(kill after ${config.MEETING_INACTIVITY_MS / 3600000}h)`
     );
+    try {
+      const paystack = require('./lib/paystack');
+      if (paystack.isConfigured()) {
+        const { startPayoutWorker } = require('./lib/payouts');
+        startPayoutWorker();
+        console.log(
+          `[Paystack] configured · verification fee ₦${config.MEETING_VERIFICATION_FEE_NAIRA} · payout delay ${config.PAYOUT_DELAY_DAYS}d`
+        );
+      } else {
+        console.log('[Paystack] not configured — paid meetings / verification disabled until keys are set');
+      }
+    } catch (e) {
+      console.warn('[Paystack]', e.message);
+    }
     console.log('[modular] Phase 1 server modules loaded from src/');
   });
 

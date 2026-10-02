@@ -5563,3 +5563,119 @@ body.dark .toast.toast-unmute-ask .toast-line2 .toast-btn.primary {
   right: 4px;
   transform: none;
 }
+
+/* Scheduled meeting monetization UI */
+.schedule-form textarea,
+.schedule-form select {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+.schedule-row span { min-width: 7rem; opacity: 0.8; }
+.schedule-row select { flex: 1; margin-bottom: 0; }
+.payout-accounts-block {
+  margin: 1.25rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+.public-search-form {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0 0.5rem;
+  max-width: 28rem;
+}
+.public-search-form input {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  color: inherit;
+}
+.public-search-results {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  max-width: 28rem;
+}
+.public-search-results li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  font-size: 0.9rem;
+}
+.scheduled-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+/* Scheduled meeting monetization UI */
+.schedule-form textarea,
+.schedule-form select {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+.schedule-row span { min-width: 7rem; opacity: 0.8; }
+.schedule-row select { flex: 1; margin-bottom: 0; }
+.payout-accounts-block {
+  margin: 1.25rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+.public-search-form {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0 0.5rem;
+  max-width: 28rem;
+}
+.public-search-form input {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  color: inherit;
+}
+.public-search-results {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  max-width: 28rem;
+}
+.public-search-results li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  font-size: 0.9rem;
+}
+.scheduled-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}

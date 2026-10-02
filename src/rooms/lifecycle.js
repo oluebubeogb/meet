@@ -22,6 +22,12 @@ function endMeeting(code, reason = 'ended') {
       db.updateScheduledStatus(meeting.scheduledId, 'ended', {
         endedAt: new Date().toISOString(),
       });
+      try {
+        const { schedulePayoutForMeeting } = require('../lib/payouts');
+        schedulePayoutForMeeting(meeting.scheduledId);
+      } catch (e) {
+        console.warn('[payout schedule]', e.message);
+      }
     } catch (_) {}
   }
   for (const [pid] of meeting.participants) {

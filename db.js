@@ -65,12 +65,79 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     started_at TEXT,
     ended_at TEXT,
+    slug TEXT,
+    visibility TEXT NOT NULL DEFAULT 'private',
+    is_paid INTEGER NOT NULL DEFAULT 0,
+    price_kobo INTEGER,
+    description TEXT,
+    payout_account_id INTEGER,
+    verification_status TEXT NOT NULL DEFAULT 'none',
+    verification_reference TEXT,
+    verification_paid_at TEXT,
+    verification_amount_kobo INTEGER,
     FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_scheduled_host ON scheduled_meetings(host_user_id);
   CREATE INDEX IF NOT EXISTS idx_scheduled_start ON scheduled_meetings(scheduled_start);
   CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_meetings(status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_slug ON scheduled_meetings(slug) WHERE slug IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_scheduled_visibility ON scheduled_meetings(visibility, scheduled_start);
+
+  CREATE TABLE IF NOT EXISTS user_payout_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    bank_code TEXT NOT NULL,
+    bank_name TEXT,
+    account_number TEXT NOT NULL,
+    account_name TEXT,
+    paystack_recipient_code TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_payout_user ON user_payout_accounts(user_id);
+
+  CREATE TABLE IF NOT EXISTS meeting_registrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_meeting_id INTEGER NOT NULL,
+    user_id INTEGER,
+    email TEXT NOT NULL COLLATE NOCASE,
+    display_name TEXT,
+    amount_paid_kobo INTEGER NOT NULL DEFAULT 0,
+    paystack_reference TEXT,
+    payment_status TEXT NOT NULL DEFAULT 'pending',
+    joined_at TEXT,
+    participant_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (scheduled_meeting_id) REFERENCES scheduled_meetings(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_meeting_email ON meeting_registrations(scheduled_meeting_id, email);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_meeting_user ON meeting_registrations(scheduled_meeting_id, user_id) WHERE user_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_reg_meeting ON meeting_registrations(scheduled_meeting_id);
+  CREATE INDEX IF NOT EXISTS idx_reg_reference ON meeting_registrations(paystack_reference);
+
+  CREATE TABLE IF NOT EXISTS meeting_payouts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_meeting_id INTEGER NOT NULL,
+    host_user_id INTEGER NOT NULL,
+    payout_account_id INTEGER,
+    gross_kobo INTEGER NOT NULL DEFAULT 0,
+    fee_kobo INTEGER NOT NULL DEFAULT 0,
+    net_kobo INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    paystack_transfer_code TEXT,
+    paystack_reference TEXT,
+    eligible_at TEXT,
+    transferred_at TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (scheduled_meeting_id) REFERENCES scheduled_meetings(id) ON DELETE CASCADE,
+    FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_payouts_status ON meeting_payouts(status, eligible_at);
+  CREATE INDEX IF NOT EXISTS idx_payouts_meeting ON meeting_payouts(scheduled_meeting_id);
 
   CREATE TABLE IF NOT EXISTS meeting_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,6 +195,33 @@ db.exec(`
   );
 `);
 
+
+// Migrate existing scheduled_meetings columns (older DBs)
+(function migrateScheduledMeetings() {
+  const cols = db.prepare(`PRAGMA table_info(scheduled_meetings)`).all().map((c) => c.name);
+  const add = (name, def) => {
+    if (!cols.includes(name)) {
+      try {
+        db.exec(`ALTER TABLE scheduled_meetings ADD COLUMN ${name} ${def}`);
+      } catch (e) {
+        console.warn('[db migrate]', name, e.message);
+      }
+    }
+  };
+  add('slug', 'TEXT');
+  add('visibility', "TEXT NOT NULL DEFAULT 'private'");
+  add('is_paid', 'INTEGER NOT NULL DEFAULT 0');
+  add('price_kobo', 'INTEGER');
+  add('description', 'TEXT');
+  add('payout_account_id', 'INTEGER');
+  add('verification_status', "TEXT NOT NULL DEFAULT 'none'");
+  add('verification_reference', 'TEXT');
+  add('verification_paid_at', 'TEXT');
+  add('verification_amount_kobo', 'INTEGER');
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_slug ON scheduled_meetings(slug) WHERE slug IS NOT NULL`);
+  } catch (_) {}
+})();
 
 // Seed default meeting templates once
 (function seedTemplates() {
@@ -260,12 +354,75 @@ function getMeetingHistoryById(id) {
 
 // ----- Scheduled meetings -----
 
-function createScheduledMeeting({ code, name, hostUserId, hostDisplayName, scheduledStart, scheduledEnd }) {
+function slugifyName(name) {
+  let s = String(name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (s.length < 10) {
+    s = (s + '-meeting').slice(0, 48);
+  }
+  if (s.length < 10) {
+    s = (s + '-' + Math.random().toString(36).slice(2, 8)).replace(/-+/g, '-');
+  }
+  return s.slice(0, 64);
+}
+
+function ensureUniqueSlug(baseSlug) {
+  let slug = baseSlug;
+  let n = 0;
+  while (true) {
+    const existing = db.prepare(`SELECT id FROM scheduled_meetings WHERE slug = ?`).get(slug);
+    if (!existing) return slug;
+    n += 1;
+    slug = `${baseSlug.slice(0, 50)}-${n}`;
+  }
+}
+
+function createScheduledMeeting({
+  code,
+  name,
+  hostUserId,
+  hostDisplayName,
+  scheduledStart,
+  scheduledEnd,
+  slug,
+  visibility,
+  isPaid,
+  priceKobo,
+  description,
+  payoutAccountId,
+}) {
+  const vis = visibility === 'public' ? 'public' : 'private';
+  const paid = isPaid ? 1 : 0;
+  let finalSlug = slug ? String(slug).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') : slugifyName(name);
+  if (finalSlug.length < 10) finalSlug = ensureUniqueSlug(slugifyName(name));
+  else finalSlug = ensureUniqueSlug(finalSlug);
+
   const stmt = db.prepare(`
-    INSERT INTO scheduled_meetings (code, name, host_user_id, host_display_name, scheduled_start, scheduled_end, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'scheduled')
+    INSERT INTO scheduled_meetings (
+      code, name, host_user_id, host_display_name, scheduled_start, scheduled_end, status,
+      slug, visibility, is_paid, price_kobo, description, payout_account_id, verification_status
+    ) VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?)
   `);
-  const info = stmt.run(code, name, hostUserId, hostDisplayName || null, scheduledStart, scheduledEnd || null);
+  const verStatus = paid ? 'none' : 'none';
+  const info = stmt.run(
+    code,
+    name,
+    hostUserId,
+    hostDisplayName || null,
+    scheduledStart,
+    scheduledEnd || null,
+    finalSlug,
+    vis,
+    paid,
+    paid ? (priceKobo || 0) : null,
+    description || null,
+    payoutAccountId || null,
+    verStatus
+  );
   return getScheduledById(info.lastInsertRowid);
 }
 
@@ -275,6 +432,10 @@ function getScheduledById(id) {
 
 function getScheduledByCode(code) {
   return db.prepare(`SELECT * FROM scheduled_meetings WHERE code = ?`).get(code);
+}
+
+function getScheduledBySlug(slug) {
+  return db.prepare(`SELECT * FROM scheduled_meetings WHERE slug = ?`).get(String(slug || '').toLowerCase());
 }
 
 function getScheduledForUser(userId, limit = 50) {
@@ -293,6 +454,26 @@ function getScheduledForUser(userId, limit = 50) {
   `).all(userId, limit);
 }
 
+function searchPublicScheduled(query, limit = 30) {
+  const q = `%${String(query || '').trim()}%`;
+  if (!String(query || '').trim()) {
+    return db.prepare(`
+      SELECT * FROM scheduled_meetings
+      WHERE visibility = 'public' AND status IN ('scheduled', 'live')
+      ORDER BY scheduled_start ASC
+      LIMIT ?
+    `).all(limit);
+  }
+  return db.prepare(`
+    SELECT * FROM scheduled_meetings
+    WHERE visibility = 'public'
+      AND status IN ('scheduled', 'live')
+      AND (name LIKE ? COLLATE NOCASE OR slug LIKE ? COLLATE NOCASE OR IFNULL(description,'') LIKE ? COLLATE NOCASE)
+    ORDER BY scheduled_start ASC
+    LIMIT ?
+  `).all(q, q, q, limit);
+}
+
 function updateScheduledStatus(id, status, extra = {}) {
   const sets = ['status = ?'];
   const vals = [status];
@@ -309,8 +490,208 @@ function updateScheduledStatus(id, status, extra = {}) {
   return getScheduledById(id);
 }
 
+function setMeetingVerification(id, { status, reference, amountKobo, paidAt }) {
+  db.prepare(`
+    UPDATE scheduled_meetings SET
+      verification_status = COALESCE(?, verification_status),
+      verification_reference = COALESCE(?, verification_reference),
+      verification_amount_kobo = COALESCE(?, verification_amount_kobo),
+      verification_paid_at = COALESCE(?, verification_paid_at)
+    WHERE id = ?
+  `).run(status || null, reference || null, amountKobo != null ? amountKobo : null, paidAt || null, id);
+  return getScheduledById(id);
+}
+
 function deleteScheduled(id, userId) {
   return db.prepare(`DELETE FROM scheduled_meetings WHERE id = ? AND host_user_id = ?`).run(id, userId);
+}
+
+// ----- Payout accounts -----
+
+function createPayoutAccount({ userId, bankCode, bankName, accountNumber, accountName, recipientCode }) {
+  const info = db.prepare(`
+    INSERT INTO user_payout_accounts (user_id, bank_code, bank_name, account_number, account_name, paystack_recipient_code)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(userId, bankCode, bankName || null, accountNumber, accountName || null, recipientCode || null);
+  return getPayoutAccountById(info.lastInsertRowid);
+}
+
+function getPayoutAccountById(id) {
+  return db.prepare(`SELECT * FROM user_payout_accounts WHERE id = ?`).get(id);
+}
+
+function getPayoutAccountsForUser(userId) {
+  return db.prepare(`
+    SELECT * FROM user_payout_accounts WHERE user_id = ? AND status = 'active' ORDER BY id DESC
+  `).all(userId);
+}
+
+function deletePayoutAccount(id, userId) {
+  return db.prepare(`UPDATE user_payout_accounts SET status = 'deleted' WHERE id = ? AND user_id = ?`).run(id, userId);
+}
+
+// ----- Registrations -----
+
+function createRegistration({ scheduledMeetingId, userId, email, displayName, amountPaidKobo, paystackReference, paymentStatus }) {
+  const info = db.prepare(`
+    INSERT INTO meeting_registrations (
+      scheduled_meeting_id, user_id, email, display_name, amount_paid_kobo, paystack_reference, payment_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    scheduledMeetingId,
+    userId || null,
+    String(email).trim().toLowerCase(),
+    displayName || null,
+    amountPaidKobo || 0,
+    paystackReference || null,
+    paymentStatus || 'pending'
+  );
+  return getRegistrationById(info.lastInsertRowid);
+}
+
+function getRegistrationById(id) {
+  return db.prepare(`SELECT * FROM meeting_registrations WHERE id = ?`).get(id);
+}
+
+function getRegistrationByReference(reference) {
+  return db.prepare(`SELECT * FROM meeting_registrations WHERE paystack_reference = ?`).get(reference);
+}
+
+function getRegistrationForMeetingEmail(scheduledMeetingId, email) {
+  return db.prepare(`
+    SELECT * FROM meeting_registrations WHERE scheduled_meeting_id = ? AND email = ? COLLATE NOCASE
+  `).get(scheduledMeetingId, String(email).trim().toLowerCase());
+}
+
+function getRegistrationForMeetingUser(scheduledMeetingId, userId) {
+  if (!userId) return null;
+  return db.prepare(`
+    SELECT * FROM meeting_registrations WHERE scheduled_meeting_id = ? AND user_id = ?
+  `).get(scheduledMeetingId, userId);
+}
+
+function listRegistrationsForMeeting(scheduledMeetingId) {
+  return db.prepare(`
+    SELECT * FROM meeting_registrations WHERE scheduled_meeting_id = ? ORDER BY created_at ASC
+  `).all(scheduledMeetingId);
+}
+
+function updateRegistrationPayment(id, { paymentStatus, amountPaidKobo, paystackReference }) {
+  db.prepare(`
+    UPDATE meeting_registrations SET
+      payment_status = COALESCE(?, payment_status),
+      amount_paid_kobo = COALESCE(?, amount_paid_kobo),
+      paystack_reference = COALESCE(?, paystack_reference)
+    WHERE id = ?
+  `).run(paymentStatus || null, amountPaidKobo != null ? amountPaidKobo : null, paystackReference || null, id);
+  return getRegistrationById(id);
+}
+
+function markRegistrationJoined(id, participantId) {
+  db.prepare(`
+    UPDATE meeting_registrations SET joined_at = datetime('now'), participant_id = ? WHERE id = ?
+  `).run(participantId || null, id);
+  return getRegistrationById(id);
+}
+
+function getMeetingIncome(scheduledMeetingId) {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS registration_count,
+      SUM(CASE WHEN payment_status = 'success' OR payment_status = 'free' THEN 1 ELSE 0 END) AS confirmed_count,
+      SUM(CASE WHEN payment_status = 'success' THEN amount_paid_kobo ELSE 0 END) AS gross_kobo
+    FROM meeting_registrations
+    WHERE scheduled_meeting_id = ?
+  `).get(scheduledMeetingId);
+  return {
+    registrationCount: row?.registration_count || 0,
+    confirmedCount: row?.confirmed_count || 0,
+    grossKobo: row?.gross_kobo || 0,
+  };
+}
+
+/** Can this email/user join a scheduled meeting? Returns { ok, registration, reason } */
+function checkRegistrationAccess(scheduledMeeting, { email, userId }) {
+  if (!scheduledMeeting) return { ok: true, registration: null };
+  // Instant (non-scheduled live) rooms don't use this table; callers only pass scheduled rows.
+  const emailNorm = email ? String(email).trim().toLowerCase() : null;
+  let reg = null;
+  if (userId) reg = getRegistrationForMeetingUser(scheduledMeeting.id, userId);
+  if (!reg && emailNorm) reg = getRegistrationForMeetingEmail(scheduledMeeting.id, emailNorm);
+
+  if (!reg) {
+    return { ok: false, registration: null, reason: 'Registration required for this meeting' };
+  }
+  if (scheduledMeeting.is_paid) {
+    if (reg.payment_status !== 'success') {
+      return { ok: false, registration: reg, reason: 'Payment required before joining' };
+    }
+  } else if (reg.payment_status !== 'free' && reg.payment_status !== 'success') {
+    return { ok: false, registration: reg, reason: 'Registration not confirmed' };
+  }
+  return { ok: true, registration: reg };
+}
+
+// ----- Meeting payouts (ticket proceeds to host) -----
+
+function createMeetingPayout({ scheduledMeetingId, hostUserId, payoutAccountId, grossKobo, feeKobo, netKobo, eligibleAt }) {
+  const info = db.prepare(`
+    INSERT INTO meeting_payouts (
+      scheduled_meeting_id, host_user_id, payout_account_id, gross_kobo, fee_kobo, net_kobo, status, eligible_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    scheduledMeetingId,
+    hostUserId,
+    payoutAccountId || null,
+    grossKobo || 0,
+    feeKobo || 0,
+    netKobo || 0,
+    eligibleAt || null
+  );
+  return getMeetingPayoutById(info.lastInsertRowid);
+}
+
+function getMeetingPayoutById(id) {
+  return db.prepare(`SELECT * FROM meeting_payouts WHERE id = ?`).get(id);
+}
+
+function getPayoutForMeeting(scheduledMeetingId) {
+  return db.prepare(`SELECT * FROM meeting_payouts WHERE scheduled_meeting_id = ? ORDER BY id DESC LIMIT 1`).get(scheduledMeetingId);
+}
+
+function listEligiblePayouts(nowIso) {
+  return db.prepare(`
+    SELECT * FROM meeting_payouts
+    WHERE status = 'pending' AND eligible_at IS NOT NULL AND eligible_at <= ?
+    ORDER BY eligible_at ASC
+    LIMIT 20
+  `).all(nowIso);
+}
+
+function updateMeetingPayout(id, fields) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    const col = {
+      status: 'status',
+      paystackTransferCode: 'paystack_transfer_code',
+      paystackReference: 'paystack_reference',
+      transferredAt: 'transferred_at',
+      errorMessage: 'error_message',
+      eligibleAt: 'eligible_at',
+      netKobo: 'net_kobo',
+      grossKobo: 'gross_kobo',
+      feeKobo: 'fee_kobo',
+    }[k];
+    if (col) {
+      sets.push(`${col} = ?`);
+      vals.push(v);
+    }
+  }
+  if (!sets.length) return getMeetingPayoutById(id);
+  vals.push(id);
+  db.prepare(`UPDATE meeting_payouts SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  return getMeetingPayoutById(id);
 }
 
 
@@ -461,9 +842,33 @@ module.exports = {
   createScheduledMeeting,
   getScheduledById,
   getScheduledByCode,
+  getScheduledBySlug,
   getScheduledForUser,
+  searchPublicScheduled,
   updateScheduledStatus,
+  setMeetingVerification,
   deleteScheduled,
+  slugifyName,
+  ensureUniqueSlug,
+  createPayoutAccount,
+  getPayoutAccountById,
+  getPayoutAccountsForUser,
+  deletePayoutAccount,
+  createRegistration,
+  getRegistrationById,
+  getRegistrationByReference,
+  getRegistrationForMeetingEmail,
+  getRegistrationForMeetingUser,
+  listRegistrationsForMeeting,
+  updateRegistrationPayment,
+  markRegistrationJoined,
+  getMeetingIncome,
+  checkRegistrationAccess,
+  createMeetingPayout,
+  getMeetingPayoutById,
+  getPayoutForMeeting,
+  listEligiblePayouts,
+  updateMeetingPayout,
   logActivity,
   getActivityForCode,
   getActivityForMeeting,

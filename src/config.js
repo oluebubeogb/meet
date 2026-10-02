@@ -15,6 +15,26 @@ const ACCOUNTS_JWT_SECRET = process.env.ACCOUNTS_JWT_SECRET || process.env.ACCOU
 const MEETING_INACTIVITY_MS = 12 * 60 * 60 * 1000;
 const MEETING_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 
+// Paystack / monetization
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || '';
+const PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY || '';
+/** Host pays this (NGN) once per paid meeting to unlock proceeds for that meeting */
+const MEETING_VERIFICATION_FEE_NAIRA = Math.max(
+  0,
+  parseInt(process.env.MEETING_VERIFICATION_FEE_NAIRA || '100', 10) || 100
+);
+/** Days after meeting ends before auto-transfer of ticket proceeds to host (0–7) */
+const PAYOUT_DELAY_DAYS = Math.min(
+  7,
+  Math.max(0, parseInt(process.env.PAYOUT_DELAY_DAYS || '0', 10) || 0)
+);
+/** Optional platform fee percent on ticket sales */
+const PLATFORM_FEE_PERCENT = Math.min(
+  100,
+  Math.max(0, parseFloat(process.env.PLATFORM_FEE_PERCENT || '0') || 0)
+);
+const PAYOUT_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -41,5 +61,11 @@ module.exports = {
   ACCOUNTS_JWT_SECRET,
   MEETING_INACTIVITY_MS,
   MEETING_CLEANUP_INTERVAL_MS,
+  PAYSTACK_SECRET_KEY,
+  PAYSTACK_PUBLIC_KEY,
+  MEETING_VERIFICATION_FEE_NAIRA,
+  PAYOUT_DELAY_DAYS,
+  PLATFORM_FEE_PERCENT,
+  PAYOUT_POLL_INTERVAL_MS,
   MIME,
 };

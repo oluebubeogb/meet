@@ -118,6 +118,12 @@
             <h2>Meet, share, and <span class="hero-gradient">get things done.</span></h2>
             <p class="home-sub">A focused meeting space for real conversations, screen sharing, and teamwork — without the clutter.</p>
 
+            <form id="publicSearchForm" class="public-search-form" role="search">
+              <input id="publicSearchInput" type="search" placeholder="Search public meetings…" autocomplete="off">
+              <button type="submit" class="btn small-btn">Search</button>
+            </form>
+            <ul id="publicSearchResults" class="public-search-results hidden"></ul>
+
             <div class="hero-pills" aria-label="Meet features">
               <span><i class="fa-solid fa-bolt"></i> Fast to join</span>
               <span><i class="fa-solid fa-desktop"></i> Screen sharing</span>
@@ -296,15 +302,73 @@
             <h3>Schedule a call</h3>
             <form id="scheduleForm" class="schedule-form">
               <input id="scheduleName" type="text" maxlength="80" placeholder="Meeting name" required>
+              <input id="scheduleSlug" type="text" minlength="10" maxlength="64" placeholder="URL slug (min 10 chars, auto from name)">
               <input id="scheduleStart" type="datetime-local" required>
               <input id="scheduleEnd" type="datetime-local" title="Optional end">
+              <label class="schedule-row"><span>Visibility</span>
+                <select id="scheduleVisibility">
+                  <option value="private">Private</option>
+                  <option value="public">Public (searchable)</option>
+                </select>
+              </label>
+              <label class="schedule-row"><span>Pricing</span>
+                <select id="schedulePricing">
+                  <option value="free">Free</option>
+                  <option value="paid">Paid (₦)</option>
+                </select>
+              </label>
+              <input id="schedulePrice" type="number" min="100" step="50" placeholder="Ticket price in Naira" class="hidden">
+              <label id="schedulePayoutWrap" class="schedule-row hidden"><span>Payout account</span>
+                <select id="schedulePayoutAccount"><option value="">Select account…</option></select>
+              </label>
+              <textarea id="scheduleDescription" maxlength="500" rows="2" placeholder="Description (optional)"></textarea>
               <button type="submit" class="btn primary-btn">Schedule</button>
             </form>
             <p id="scheduleError" class="error-msg hidden"></p>
           </div>
+          <div class="payout-accounts-block">
+            <h3>Payout accounts</h3>
+            <p class="history-meta">Required for paid meetings. Ticket proceeds are sent here after the meeting.</p>
+            <form id="payoutAccountForm" class="schedule-form">
+              <select id="payoutBank" required><option value="">Bank…</option></select>
+              <input id="payoutAccountNumber" type="text" inputmode="numeric" maxlength="12" placeholder="Account number" required>
+              <button type="submit" class="btn small-btn">Add account</button>
+            </form>
+            <p id="payoutAccountError" class="error-msg hidden"></p>
+            <ul id="payoutAccountsList" class="history-list"></ul>
+          </div>
           <p id="scheduledEmpty" class="history-empty hidden">No scheduled meetings.</p>
           <ul id="scheduledList" class="history-list"></ul>
+          <div id="scheduledDetail" class="history-detail hidden">
+            <h3 id="scheduledDetailTitle"></h3>
+            <p id="scheduledDetailMeta" class="history-meta"></p>
+            <p id="scheduledDetailIncome" class="history-meta"></p>
+            <h4>Registered attendees</h4>
+            <ul id="scheduledDetailAttendees" class="history-participants"></ul>
+            <button id="scheduledDetailBack" class="btn small-btn">Back to list</button>
+          </div>
         </div>
+      </div>
+    </section>
+
+    <!-- PUBLIC SCHEDULED MEETING (/m/slug) -->
+    <section id="publicMeetingView" class="history-view hidden">
+      <div class="history-card">
+        <div class="history-header">
+          <h2 id="pmTitle">Meeting</h2>
+          <button id="pmBackBtn" class="btn small-btn">Back</button>
+        </div>
+        <p id="pmMeta" class="history-meta"></p>
+        <p id="pmDesc" class="home-sub"></p>
+        <p id="pmPrice" class="history-meta"></p>
+        <form id="pmRegisterForm" class="schedule-form">
+          <input id="pmEmail" type="email" placeholder="Email" required>
+          <input id="pmName" type="text" maxlength="60" placeholder="Your name" required>
+          <button type="submit" class="btn primary-btn" id="pmRegisterBtn">Register</button>
+        </form>
+        <p id="pmError" class="error-msg hidden"></p>
+        <p id="pmSuccess" class="history-meta hidden"></p>
+        <button type="button" id="pmJoinBtn" class="btn primary-btn hidden">Join meeting</button>
       </div>
     </section>
 
