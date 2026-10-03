@@ -4046,9 +4046,19 @@
       box.classList.remove('hidden');
       (data.meetings || []).forEach(function (m) {
         var li = document.createElement('li');
-        li.innerHTML = '<a href="' + escapeHtml(m.link || ('/m/' + m.slug)) + '"><strong>' + escapeHtml(m.name) + '</strong></a> ' +
+        var href = m.link || ('/m/' + m.slug);
+        li.innerHTML = '<a href="' + escapeHtml(href) + '" data-slug="' + escapeHtml(m.slug || '') + '"><strong>' + escapeHtml(m.name) + '</strong></a> ' +
           (m.isPaid ? ('₦' + m.priceNaira) : 'Free') + ' · ' + (m.scheduledStart ? new Date(m.scheduledStart).toLocaleString() : '');
         box.appendChild(li);
+      });
+      box.querySelectorAll('a[data-slug]').forEach(function (a) {
+        a.addEventListener('click', function (ev) {
+          var s = a.getAttribute('data-slug');
+          if (!s) return;
+          ev.preventDefault();
+          history.pushState({ slug: s }, '', '/m/' + s);
+          showPublicMeeting(s);
+        });
       });
       if (!(data.meetings || []).length) {
         box.innerHTML = '<li class="history-meta">No public meetings found</li>';
@@ -4060,15 +4070,24 @@
   async function showPublicMeeting(slug) {
     var view = $('publicMeetingView');
     if (!view) return;
+    // Hide every other top-level surface so only the register card shows
+    ['homeView', 'historyView', 'meetingView', 'waitingView', 'authView', 'createView', 'joinView'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.classList.add('hidden');
+    });
     if (homeView) homeView.classList.add('hidden');
-    if ($('historyView')) $('historyView').classList.add('hidden');
     view.classList.remove('hidden');
+    if ($('pmError')) { $('pmError').classList.add('hidden'); $('pmError').textContent = ''; }
+    if ($('pmSuccess')) $('pmSuccess').classList.add('hidden');
+    if ($('pmJoinBtn')) $('pmJoinBtn').classList.add('hidden');
+    if ($('pmRegisterForm')) $('pmRegisterForm').classList.remove('hidden');
     try {
       var res = await fetch('/api/m/' + encodeURIComponent(slug));
       var m = await res.json();
       if (!res.ok) {
         if ($('pmTitle')) $('pmTitle').textContent = 'Not found';
         if ($('pmError')) { $('pmError').textContent = m.error || 'Not found'; $('pmError').classList.remove('hidden'); }
+        if ($('pmRegisterForm')) $('pmRegisterForm').classList.add('hidden');
         return;
       }
       if ($('pmTitle')) $('pmTitle').textContent = m.name || 'Meeting';
@@ -4088,11 +4107,16 @@
         $('pmRegisterBtn').textContent = m.isPaid ? ('Pay ₦' + (m.priceNaira || 0)) : 'Register';
         $('pmRegisterBtn').disabled = !!m.verificationRequired;
       }
+      if (m.verificationRequired && $('pmError')) {
+        $('pmError').textContent = 'Host has not activated ticket sales for this meeting yet.';
+        $('pmError').classList.remove('hidden');
+      }
       window.__publicMeetingSlug = slug;
       window.__publicMeetingMeta = m;
-      if (m.isLive && m.code && ($('pmSuccess') && !$('pmSuccess').classList.contains('hidden'))) {
+      if (m.isLive && m.code) {
         if ($('pmJoinBtn')) {
           $('pmJoinBtn').classList.remove('hidden');
+          $('pmJoinBtn').textContent = 'Join live meeting';
           $('pmJoinBtn').onclick = function () { location.href = meetingPath(m.code); };
         }
       }
