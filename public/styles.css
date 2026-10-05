@@ -5563,3 +5563,83 @@ body.dark .toast.toast-unmute-ask .toast-line2 .toast-btn.primary {
   right: 4px;
   transform: none;
 }
+
+
+/* ===== Phase 1 quick wins ===== */
+#chatInput {
+  min-height: 2.5rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  z-index: 5;
+  position: relative;
+}
+.chat-input-row, .chat-compose, .chat-footer {
+  overflow: visible;
+  z-index: 4;
+}
+#endMeetBtnTop:not(.hidden),
+#endMeetBtn:not(.hidden) {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+.meeting-duration-timer {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  opacity: 0.85;
+  margin-right: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.08);
+}
+html.dark .meeting-duration-timer {
+  background: rgba(255,255,255,0.1);
+}
+.meeting-duration-timer.hidden { display: none; }
+.artifact-view {
+  max-width: 1100px;
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+}
+.artifact-card {
+  background: var(--card, #fff);
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.artifact-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+@media (max-width: 800px) {
+  .artifact-grid { grid-template-columns: 1fr; }
+}
+.artifact-chat {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-size: 0.92rem;
+}
+.artifact-chat .msg {
+  margin-bottom: 0.5rem;
+}
+.artifact-chat .msg strong { margin-right: 0.35rem; }
+#artifactNotes {
+  width: 100%;
+  border-radius: 8px;
+  padding: 0.5rem;
+  border: 1px solid rgba(0,0,0,0.12);
+}
+.history-artifact-btn {
+  margin-left: 0.5rem;
+}

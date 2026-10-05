@@ -15,7 +15,7 @@ module.exports = {
       });
     }
 
-    ctx.onWs('start-recording', ({ msg, participantId, meeting, meetingCode }) => {
+    ctx.onWs('start-recording', async ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || actor.role !== 'host') return;
       if (meeting.recording && meeting.recording.status === 'recording') return;
@@ -29,7 +29,7 @@ module.exports = {
 
       let row = null;
       try {
-        row = db.startRecording({
+        row = await db.startRecording({
           meetingHistoryId: meeting.historyId || null,
           code: meetingCode,
           startedByUserId: actor.userId || null,
@@ -59,13 +59,13 @@ module.exports = {
       });
     });
 
-    ctx.onWs('stop-recording', ({ participantId, meeting, meetingCode }) => {
+    ctx.onWs('stop-recording', async ({ participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || actor.role !== 'host') return;
       if (!meeting.recording || meeting.recording.status !== 'recording') return;
 
       try {
-        if (meeting.recording.id) db.stopRecording(meeting.recording.id);
+        if (meeting.recording.id) await db.stopRecording(meeting.recording.id);
       } catch (e) {
         console.error('[recording] stop', e.message);
       }

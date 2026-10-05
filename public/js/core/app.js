@@ -511,9 +511,18 @@
             <span>${formatDate(h.createdAt)}</span>
             <span>${status}</span>
             <span>${h.maxParticipants} people max</span>
+            ${h.artifactUrl ? '<button type="button" class="btn small-btn history-artifact-btn" data-artifact-url="' + escapeHtml(h.artifactUrl) + '">View Artifacts</button>' : ''}
           </div>
         `;
-        li.addEventListener('click', () => openHistoryDetail(h.id));
+        li.addEventListener('click', (ev) => {
+          if (ev.target && ev.target.closest && ev.target.closest('[data-artifact-url]')) {
+            ev.stopPropagation();
+            const url = ev.target.closest('[data-artifact-url]').getAttribute('data-artifact-url');
+            if (url) openArtifactFromPath(url);
+            return;
+          }
+          openHistoryDetail(h.id);
+        });
         historyList.appendChild(li);
       });
     } catch (e) {
@@ -548,10 +557,112 @@
           historyDetailParticipants.appendChild(li);
         });
       }
+      let artBtn = document.getElementById('historyArtifactBtn');
+      if (!artBtn && historyDetail) {
+        artBtn = document.createElement('button');
+        artBtn.id = 'historyArtifactBtn';
+        artBtn.className = 'btn primary-btn';
+        artBtn.style.marginTop = '0.75rem';
+        historyDetail.appendChild(artBtn);
+      }
+      if (artBtn) {
+        if (data.artifact && data.artifact.url) {
+          artBtn.classList.remove('hidden');
+          artBtn.textContent = 'View Artifacts';
+          artBtn.onclick = () => openArtifactFromPath(data.artifact.url);
+        } else {
+          artBtn.classList.add('hidden');
+        }
+      }
     } catch (e) {
       alert(e.message);
     }
   }
+
+  function openArtifactFromPath(path) {
+    const parts = String(path).split('/').filter(Boolean);
+    if (parts.length >= 3) openArtifactViewer(parts[1], parts[2]);
+  }
+
+  async function openArtifactViewer(code, slug) {
+    try {
+      const data = await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug));
+      const av = document.getElementById('artifactView');
+      document.getElementById('homeView')?.classList.add('hidden');
+      document.getElementById('meetingView')?.classList.add('hidden');
+      document.getElementById('historyView')?.classList.add('hidden');
+      if (av) av.classList.remove('hidden');
+      const title = document.getElementById('artifactTitle');
+      if (title) title.textContent = (data.meeting && data.meeting.name) || 'Meeting Artifact';
+      const meta = document.getElementById('artifactMeta');
+      if (meta) {
+        meta.textContent = 'Code ' + (data.artifact.code || code) +
+          (data.meeting && data.meeting.endedAt ? ' · Ended ' + formatDate(data.meeting.endedAt) : '') +
+          (data.artifact.isLive ? ' · LIVE' : ' · Archived');
+      }
+      const chatEl = document.getElementById('artifactChat');
+      if (chatEl) {
+        chatEl.innerHTML = (data.chat || []).map(function (c) {
+          return '<div class="msg"><strong>' + escapeHtml(c.senderName || 'Someone') + '</strong> ' + escapeHtml(c.body || '') + '</div>';
+        }).join('') || '<p class="history-empty">No chat messages saved.</p>';
+      }
+      const partEl = document.getElementById('artifactParticipants');
+      if (partEl) {
+        partEl.innerHTML = '';
+        (data.participants || []).forEach(function (p) {
+          const li = document.createElement('li');
+          li.textContent = p.displayName + (p.joinedAt ? ' · ' + formatDate(p.joinedAt) : '');
+          partEl.appendChild(li);
+        });
+      }
+      const recEl = document.getElementById('artifactRecordings');
+      if (recEl) {
+        recEl.innerHTML = '';
+        (data.recordings || []).forEach(function (r) {
+          const li = document.createElement('li');
+          li.textContent = 'Recording #' + r.id + ' · ' + (r.status || '') + (r.fileUrl ? '' : ' (no file yet)');
+          if (r.fileUrl) {
+            li.innerHTML = '<a href="' + escapeHtml(r.fileUrl) + '" target="_blank" rel="noopener">Recording #' + r.id + '</a>';
+          }
+          recEl.appendChild(li);
+        });
+        if (!(data.recordings || []).length) recEl.innerHTML = '<li class="history-empty">No recordings</li>';
+      }
+      const notes = document.getElementById('artifactNotes');
+      if (notes) notes.value = (data.note && data.note.content) || '';
+      const restart = document.getElementById('artifactRestartBtn');
+      if (restart) {
+        restart.classList.toggle('hidden', !data.isHost);
+        restart.onclick = async function () {
+          try {
+            const res = await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug) + '/restart', { method: 'POST', body: '{}' });
+            if (res.joinUrl) location.href = res.joinUrl;
+          } catch (err) { alert(err.message); }
+        };
+      }
+      const saveNotes = document.getElementById('artifactSaveNotes');
+      if (saveNotes) {
+        saveNotes.onclick = async function () {
+          try {
+            await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug) + '/note', {
+              method: 'POST',
+              body: JSON.stringify({ content: (document.getElementById('artifactNotes') || {}).value || '' }),
+            });
+            if (typeof showToast === 'function') showToast('Notes saved');
+          } catch (err) { alert(err.message); }
+        };
+      }
+      const closeBtn = document.getElementById('artifactCloseBtn');
+      if (closeBtn) closeBtn.onclick = function () { if (av) av.classList.add('hidden'); showHistory(); };
+    } catch (e) {
+      alert(e.message || 'Failed to load artifact');
+    }
+  }
+
+  (function checkArtifactDeepLink() {
+    const m = location.pathname.match(/^\/m\/([^/]+)\/([^/]+)\/?$/);
+    if (m) setTimeout(function () { openArtifactViewer(m[1], m[2]); }, 200);
+  })();
 
   historyBtn?.addEventListener('click', showHistory);
   historyCloseBtn?.addEventListener('click', () => {
@@ -2233,6 +2344,7 @@
     homeView?.classList.add('hidden');
     historyView?.classList.add('hidden');
     meetingView?.classList.remove('hidden');
+    try { startMeetingDurationTimer(); } catch (_) {}
     leaveBtn?.classList.remove('hidden');
     try {
       const rb = document.getElementById('rejoinBar');
@@ -2272,6 +2384,83 @@
     await connectLiveKit();
   }
 
+  function resetMeetingState() {
+    // Phase 1: clear leaked DOM / JS state between meetings
+    try {
+      var chatBox = document.getElementById('chatMessages');
+      if (chatBox) chatBox.innerHTML = '';
+    } catch (_) {}
+    try {
+      var recent = document.getElementById('recentReactions');
+      if (recent) recent.innerHTML = '';
+    } catch (_) {}
+    try {
+      document.querySelectorAll('.reaction-overlay, .flying-reaction').forEach(function (el) {
+        try { el.remove(); } catch (_) {}
+      });
+    } catch (_) {}
+    try {
+      if (typeof window.__resetScreenTimeline === 'function') window.__resetScreenTimeline();
+    } catch (_) {}
+    try { clearBigView(); } catch (_) {}
+    try {
+      var notes = document.getElementById('notesEditor');
+      if (notes) notes.value = '';
+    } catch (_) {}
+    try {
+      if (typeof activityEntries !== 'undefined') activityEntries.length = 0;
+    } catch (_) {}
+    try {
+      if (typeof recentReactions !== 'undefined') recentReactions.length = 0;
+    } catch (_) {}
+    try { recordingState = null; } catch (_) {}
+    try {
+      if (window.__meetingDurationTimer) {
+        clearInterval(window.__meetingDurationTimer);
+        window.__meetingDurationTimer = null;
+      }
+      var durEl = document.getElementById('meetingDurationTimer');
+      if (durEl) { durEl.textContent = ''; durEl.classList.add('hidden'); }
+    } catch (_) {}
+    try {
+      var badge = document.getElementById('recordingBadge');
+      if (badge) badge.classList.add('hidden');
+      if (window.__recTimerInterval) {
+        clearInterval(window.__recTimerInterval);
+        window.__recTimerInterval = null;
+      }
+    } catch (_) {}
+    try {
+      if (window.__clientRecorder) {
+        try { window.__clientRecorder.stop(); } catch (_) {}
+        window.__clientRecorder = null;
+      }
+    } catch (_) {}
+    participants = [];
+  }
+
+
+  function startMeetingDurationTimer() {
+    try {
+      if (window.__meetingDurationTimer) clearInterval(window.__meetingDurationTimer);
+      var el = document.getElementById('meetingDurationTimer');
+      if (!el) return;
+      el.classList.remove('hidden');
+      var start = Date.now();
+      function tick() {
+        var s = Math.floor((Date.now() - start) / 1000);
+        var m = Math.floor(s / 60);
+        var h = Math.floor(m / 60);
+        m = m % 60; s = s % 60;
+        el.textContent = h > 0
+          ? (h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'))
+          : (String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'));
+      }
+      tick();
+      window.__meetingDurationTimer = setInterval(tick, 1000);
+    } catch (_) {}
+  }
+
   async function leaveMeeting() {
     if (currentMeeting) {
       try {
@@ -2288,9 +2477,8 @@
     if (wsRetryTimer) clearTimeout(wsRetryTimer);
     if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} ws = null; }
     await disconnectLiveKit();
-    clearBigView();
+    resetMeetingState();
     currentMeeting = null;
-    participants = [];
     saveSession(null);
     clearMeetingUrl(false);
 
@@ -2305,7 +2493,6 @@
     try {
       if (document.fullscreenElement) document.exitFullscreen?.();
     } catch (_) {}
-    if (typeof window.__resetScreenTimeline === 'function') window.__resetScreenTimeline();
     $('endMeetBtnTop')?.classList.add('hidden');
     if (typeof syncMoreMenuInCall === 'function') syncMoreMenuInCall();
     setWsStatus('left');
@@ -4679,6 +4866,27 @@
       recordingState = msg.recording || null;
       updateRecordingBadge();
       refreshPhase2Chrome();
+      // Phase 1 recording UX: reflect state on menu / modal
+      try {
+        var recItem = document.querySelector('.more-record');
+        if (recItem) {
+          if (recordingState && recordingState.status === 'recording') {
+            recItem.innerHTML = '<i class="fa-solid fa-stop"></i> Stop recording';
+          } else if (recordingState && recordingState.status === 'stopped') {
+            recItem.innerHTML = '<i class="fa-solid fa-circle"></i> Recorded → Artifacts';
+          } else {
+            recItem.innerHTML = '<i class="fa-solid fa-circle"></i> Record';
+          }
+        }
+        var startBtn = document.getElementById('recordStartBtn');
+        if (startBtn && recordingState && recordingState.status === 'recording') {
+          startBtn.disabled = true;
+          startBtn.textContent = 'Already recording…';
+        } else if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.textContent = 'Start recording';
+        }
+      } catch (_) {}
     },
     toast: function (msg) {
       if (msg.message) showToast(msg.message);
@@ -5634,7 +5842,7 @@
         if (timer) clearTimeout(timer);
         timer = null;
         if (!longPress && currentMeeting) {
-          try { sendWS({ type: 'reaction', emoji: '❤️' }); } catch (_) {}
+          try { sendWS({ type: 'reaction', emoji: '😊' }); } catch (_) {}
         }
       }
       btn.addEventListener('pointerup', endPress);
@@ -6270,7 +6478,7 @@
     }
 
     function noteReaction(from, emoji) {
-      recentReactions.unshift({ from: from || 'Someone', emoji: emoji || '❤️', t: Date.now() });
+      recentReactions.unshift({ from: from || 'Someone', emoji: emoji || '😊', t: Date.now() });
       if (recentReactions.length > 20) recentReactions.length = 20;
       if (activePane === 'reactions') renderRecentReactions();
     }

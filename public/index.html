@@ -270,6 +270,35 @@
     </section>
 
     <!-- HISTORY + SCHEDULED -->
+    
+    <section id="artifactView" class="artifact-view hidden">
+      <div class="artifact-card">
+        <div class="artifact-header">
+          <h2 id="artifactTitle">Meeting Artifact</h2>
+          <button id="artifactCloseBtn" class="btn small-btn">Back</button>
+        </div>
+        <p id="artifactMeta" class="history-meta"></p>
+        <div class="artifact-actions">
+          <button id="artifactRestartBtn" class="btn primary-btn hidden">Restart this meeting</button>
+        </div>
+        <div class="artifact-grid">
+          <div class="artifact-col">
+            <h3>Chat</h3>
+            <div id="artifactChat" class="artifact-chat"></div>
+          </div>
+          <div class="artifact-col">
+            <h3>Participants</h3>
+            <ul id="artifactParticipants" class="history-participants"></ul>
+            <h3>Recordings</h3>
+            <ul id="artifactRecordings" class="history-list"></ul>
+            <h3>Your notes</h3>
+            <textarea id="artifactNotes" rows="6" placeholder="Private notes (only you can see)"></textarea>
+            <button id="artifactSaveNotes" class="btn small-btn">Save notes</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="historyView" class="history-view hidden">
       <div class="history-card">
         <div class="history-header">
@@ -458,6 +487,7 @@
             </div>
             <div class="meeting-title-bar desktop-only">
               <span id="meetingNameLabel" class="meeting-name-label hidden"></span>
+              <span id="meetingDurationTimer" class="meeting-duration-timer hidden" title="Meeting duration">00:00</span>
               <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> Recording <span id="recordingTimer"></span></span>
               <button id="shareLinkBtn" class="btn small-btn hidden" title="Copy invite link" aria-hidden="true">
                 <i class="fa-solid fa-link"></i> Share
@@ -586,7 +616,7 @@
                   <div class="reaction-row dyn-reaction-row" id="dynEmojiBar">
                     <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs up">👍</button>
                     <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
-                    <button type="button" class="emoji-btn" data-emoji="❤️" title="Heart">❤️</button>
+                    <button type="button" class="emoji-btn" data-emoji="😊" title="Heart">😊</button>
                     <button type="button" class="emoji-btn" data-emoji="😂" title="Laugh">😂</button>
                     <button type="button" class="emoji-btn" data-emoji="🎉" title="Celebrate">🎉</button>
                     <button type="button" class="emoji-btn" data-emoji="😮" title="Wow">😮</button>
@@ -641,11 +671,11 @@
                   <span>More</span>
                 </button>
                 <div id="meetingMorePanel" class="meeting-more-panel hidden" role="menu">
-                  <div class="more-section-label">Reactions</div>
+                  
                   <div class="reaction-row" id="emojiBar">
                     <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs up">👍</button>
                     <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
-                    <button type="button" class="emoji-btn" data-emoji="❤️" title="Heart">❤️</button>
+                    <button type="button" class="emoji-btn" data-emoji="😊" title="Heart">😊</button>
                     <button type="button" class="emoji-btn" data-emoji="😂" title="Laugh">😂</button>
                     <button type="button" class="emoji-btn" data-emoji="🎉" title="Celebrate">🎉</button>
                   </div>

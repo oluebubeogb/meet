@@ -222,7 +222,7 @@ function attachWebSocket(server) {
       if (msg.type === 'end-meeting') {
         const p = meeting.participants.get(participantId);
         if (p && p.isHost) {
-          endMeeting(meetingCode, 'host-ended');
+          Promise.resolve(endMeeting(meetingCode, 'host-ended')).catch(() => {});
         }
         return;
       }
@@ -232,7 +232,9 @@ function attachWebSocket(server) {
         const payload = { msg, participantId, meeting, meetingCode, ws };
         for (const h of handlers) {
           try {
-            h(payload);
+            Promise.resolve(h(payload)).catch((e) => {
+              console.error('[ws] plugin handler ' + msg.type + ':', e.message);
+            });
           } catch (e) {
             console.error('[ws] plugin handler ' + msg.type + ':', e.message);
           }

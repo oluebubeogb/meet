@@ -93,7 +93,7 @@ module.exports = {
     });
 
     // ----- Role changes -----
-    ctx.onWs('set-role', ({ msg, participantId, meeting, meetingCode }) => {
+    ctx.onWs('set-role', async ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || !can(meeting, actor, 'manageRoles')) return;
       const targetId = msg.targetId;
@@ -106,7 +106,7 @@ module.exports = {
       target.isHost = false;
       try {
         if (ctx.db) {
-          ctx.db.upsertMembership({
+          await ctx.db.upsertMembership({
             code: meetingCode,
             userId: target.userId,
             participantId: targetId,
@@ -147,7 +147,7 @@ module.exports = {
     });
 
     // ----- Remove -----
-    ctx.onWs('remove-participant', ({ msg, participantId, meeting, meetingCode }) => {
+    ctx.onWs('remove-participant', async ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || !can(meeting, actor, 'removePeople')) return;
       const targetId = msg.targetId;
@@ -161,7 +161,7 @@ module.exports = {
       blockParticipant(meeting, target, { preventRejoin });
       try {
         if (ctx.db) {
-          ctx.db.setMembershipStatus(meetingCode, {
+          await ctx.db.setMembershipStatus(meetingCode, {
             userId: target.userId,
             participantId: targetId,
             status: preventRejoin ? 'BLOCKED' : 'REMOVED',

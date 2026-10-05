@@ -72,7 +72,8 @@ function createRequestHandler() {
     return sendJSON(res, 200, {
       ok: true,
       livekitConfigured: !!(LIVEKIT_API_KEY && LIVEKIT_API_SECRET && LIVEKIT_URL),
-      db: db.DB_PATH,
+      db: db.USE_PG ? "postgresql" : db.DB_PATH,
+      postgres: !!db.USE_PG,
     });
   }
 
@@ -106,7 +107,7 @@ function createRequestHandler() {
       }
       const access = data.access_token;
       const u = data.user || {};
-      const linked = ensureAccountsUser({
+      const linked = await ensureAccountsUser({
         accountsId: String(u.id),
         email: u.email,
         username: u.username,
@@ -148,7 +149,7 @@ function createRequestHandler() {
       }
       const access = data.access_token;
       const u = data.user || {};
-      const linked = ensureAccountsUser({
+      const linked = await ensureAccountsUser({
         accountsId: String(u.id),
         email: u.email,
         username: u.username,
@@ -185,15 +186,15 @@ function createRequestHandler() {
         return sendJSON(res, 400, { error: 'Password too long' });
       }
 
-      if (db.getUserByUsername(username)) {
+      if (await db.getUserByUsername(username)) {
         return sendJSON(res, 409, { error: 'Username already taken' });
       }
-      if (db.getUserByEmail(email)) {
+      if (await db.getUserByEmail(email)) {
         return sendJSON(res, 409, { error: 'Email already registered' });
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
-      const user = db.createUser({ username, email, passwordHash });
+      const user = await db.createUser({ username, email, passwordHash });
       const token = signToken(user);
       return sendJSON(res, 201, { token, user: publicUser(user) });
     } catch (e) {
@@ -223,7 +224,7 @@ function createRequestHandler() {
           const data = await resA.json().catch(() => ({}));
           if (resA.ok && data.access_token) {
             const u = data.user || {};
-            const linked = ensureAccountsUser({
+            const linked = await ensureAccountsUser({
               accountsId: String(u.id),
               email: u.email,
               username: u.username,
@@ -246,7 +247,7 @@ function createRequestHandler() {
         }
       }
 
-      const row = db.findUserByLogin(login);
+      const row = await db.findUserByLogin(login);
       if (!row) {
         return sendJSON(res, 401, { error: 'Invalid credentials' });
       }
@@ -274,9 +275,18 @@ function createRequestHandler() {
     const user = await getAuthUser(req);
     if (!user) return sendJSON(res, 401, { error: 'Not authenticated' });
     const limit = Math.min(100, Math.max(1, parseInt(parsed.searchParams.get('limit') || '50', 10)));
-    const rows = db.getHistoryForUser(user.id, limit);
-    return sendJSON(res, 200, {
-      history: rows.map((r) => ({
+    const rows = await db.getHistoryForUser(user.id, limit);
+    const history = [];
+    for (const r of rows) {
+      let artifact = null;
+      try {
+        if (r.ended_at) {
+          artifact = await db.ensureArtifactForHistory(r.id, r.code);
+        } else {
+          artifact = await db.getArtifactForHistory(r.id);
+        }
+      } catch (_) {}
+      history.push({
         id: r.id,
         code: r.code,
         name: r.name,
@@ -285,8 +295,11 @@ function createRequestHandler() {
         endedAt: r.ended_at,
         maxParticipants: r.max_participants,
         wasHost: !!r.was_host,
-      })),
-    });
+        artifactSlug: artifact ? artifact.artifact_slug : null,
+        artifactUrl: artifact ? `/m/${r.code}/${artifact.artifact_slug}` : null,
+      });
+    }
+    return sendJSON(res, 200, { history });
   }
 
   if (urlPath.startsWith('/api/history/') && req.method === 'GET') {
@@ -294,14 +307,20 @@ function createRequestHandler() {
     if (!user) return sendJSON(res, 401, { error: 'Not authenticated' });
     const id = parseInt(urlPath.split('/').pop(), 10);
     if (!id) return sendJSON(res, 400, { error: 'Invalid id' });
-    const meeting = db.getMeetingHistoryById(id);
+    const meeting = await db.getMeetingHistoryById(id);
     if (!meeting) return sendJSON(res, 404, { error: 'Not found' });
     // Only host or someone who joined can view
-    const participants = db.getMeetingParticipantsLog(id);
+    const participants = await db.getMeetingParticipantsLog(id);
     const allowed =
       meeting.host_user_id === user.id ||
       participants.some((p) => p.user_id === user.id);
     if (!allowed) return sendJSON(res, 403, { error: 'Forbidden' });
+    let artifact = null;
+    try {
+      if (meeting.ended_at) artifact = await db.ensureArtifactForHistory(id, meeting.code);
+      else artifact = await db.getArtifactForHistory(id);
+    } catch (_) {}
+    const recordings = await db.getRecordingsForHistory(id).catch(() => []);
     return sendJSON(res, 200, {
       meeting: {
         id: meeting.id,
@@ -318,6 +337,142 @@ function createRequestHandler() {
         joinedAt: p.joined_at,
         leftAt: p.left_at,
       })),
+      artifact: artifact
+        ? {
+            id: artifact.id,
+            slug: artifact.artifact_slug,
+            url: `/m/${meeting.code}/${artifact.artifact_slug}`,
+            isLive: !!artifact.is_live,
+            isPublic: !!artifact.is_public,
+          }
+        : null,
+      recordings: (recordings || []).map((rec) => ({
+        id: rec.id,
+        status: rec.status,
+        startedAt: rec.started_at,
+        endedAt: rec.ended_at,
+        fileUrl: rec.file_url || null,
+      })),
+    });
+  }
+
+  // ----- Artifacts (Phase 1) -----
+  if (urlPath.startsWith('/api/artifacts/') && req.method === 'GET') {
+    const parts = urlPath.split('/').filter(Boolean); // api, artifacts, code, slug
+    if (parts.length >= 4) {
+      const code = parts[2].toUpperCase();
+      const slug = parts[3];
+      const artifact = await db.getArtifactBySlug(code, slug);
+      if (!artifact) return sendJSON(res, 404, { error: 'Artifact not found' });
+      const meeting = artifact.meeting_history_id
+        ? await db.getMeetingHistoryById(artifact.meeting_history_id)
+        : null;
+      const user = await getAuthUser(req);
+      const isPublic = !!artifact.is_public;
+      let allowed = isPublic;
+      if (!allowed && user && meeting) {
+        const partsLog = await db.getMeetingParticipantsLog(meeting.id);
+        allowed =
+          meeting.host_user_id === user.id ||
+          partsLog.some((p) => p.user_id === user.id);
+      }
+      if (!allowed) return sendJSON(res, 403, { error: 'Forbidden' });
+      const chat = await db.getChatForArtifact(artifact.id).catch(() => []);
+      const activity = meeting
+        ? await db.getActivityForMeeting(meeting.id).catch(() => [])
+        : [];
+      const recordings = meeting
+        ? await db.getRecordingsForHistory(meeting.id).catch(() => [])
+        : [];
+      const participants = meeting
+        ? await db.getMeetingParticipantsLog(meeting.id).catch(() => [])
+        : [];
+      let note = null;
+      if (user) note = await db.getPersonalNote(artifact.id, user.id).catch(() => null);
+      return sendJSON(res, 200, {
+        artifact: {
+          id: artifact.id,
+          code: artifact.short_code,
+          slug: artifact.artifact_slug,
+          isLive: !!artifact.is_live,
+          isPublic: isPublic,
+          createdAt: artifact.created_at,
+        },
+        meeting: meeting
+          ? {
+              id: meeting.id,
+              code: meeting.code,
+              name: meeting.name,
+              hostDisplayName: meeting.host_display_name,
+              createdAt: meeting.created_at,
+              endedAt: meeting.ended_at,
+            }
+          : null,
+        chat: (chat || []).map((c) => ({
+          id: c.id,
+          senderId: c.sender_id,
+          senderName: c.sender_name,
+          body: c.body,
+          attachments: typeof c.attachments === 'string' ? JSON.parse(c.attachments || 'null') : c.attachments,
+          createdAt: c.created_at,
+        })),
+        activity,
+        recordings: (recordings || []).map((rec) => ({
+          id: rec.id,
+          status: rec.status,
+          startedAt: rec.started_at,
+          endedAt: rec.ended_at,
+          fileUrl: rec.file_url || null,
+        })),
+        participants: (participants || []).map((p) => ({
+          displayName: p.display_name,
+          userId: p.user_id,
+          joinedAt: p.joined_at,
+          leftAt: p.left_at,
+        })),
+        note: note ? { content: note.content, updatedAt: note.updated_at } : null,
+        isHost: !!(user && meeting && meeting.host_user_id === user.id),
+      });
+    }
+  }
+
+  if (urlPath.match(/^\/api\/artifacts\/[^/]+\/[^/]+\/note$/) && req.method === 'POST') {
+    const user = await getAuthUser(req);
+    if (!user) return sendJSON(res, 401, { error: 'Not authenticated' });
+    const parts = urlPath.split('/').filter(Boolean);
+    const code = parts[2].toUpperCase();
+    const slug = parts[3];
+    const artifact = await db.getArtifactBySlug(code, slug);
+    if (!artifact) return sendJSON(res, 404, { error: 'Artifact not found' });
+    const body = await parseBody(req);
+    const note = await db.upsertPersonalNote({
+      artifactId: artifact.id,
+      userId: user.id,
+      content: body.content || '',
+    });
+    return sendJSON(res, 200, { note: { content: note.content, updatedAt: note.updated_at } });
+  }
+
+  if (urlPath.match(/^\/api\/artifacts\/[^/]+\/[^/]+\/restart$/) && req.method === 'POST') {
+    const user = await getAuthUser(req);
+    if (!user) return sendJSON(res, 401, { error: 'Not authenticated' });
+    const parts = urlPath.split('/').filter(Boolean);
+    const code = parts[2].toUpperCase();
+    const slug = parts[3];
+    const artifact = await db.getArtifactBySlug(code, slug);
+    if (!artifact) return sendJSON(res, 404, { error: 'Artifact not found' });
+    const meeting = artifact.meeting_history_id
+      ? await db.getMeetingHistoryById(artifact.meeting_history_id)
+      : null;
+    if (!meeting || meeting.host_user_id !== user.id) {
+      return sendJSON(res, 403, { error: 'Only the host can restart this meeting' });
+    }
+    await db.setArtifactLive(artifact.id, true);
+    return sendJSON(res, 200, {
+      ok: true,
+      joinUrl: `/?join=${encodeURIComponent(code)}`,
+      code,
+      artifactSlug: slug,
     });
   }
 
@@ -382,14 +537,14 @@ function createRequestHandler() {
         return sendJSON(res, 400, { error: 'Please enter your display name' });
       }
 
-      const historyId = db.startMeetingHistory({
+      const historyId = await db.startMeetingHistory({
         code,
         name,
         hostUserId: authUser ? authUser.id : null,
         hostDisplayName: hostName,
       });
 
-      db.logParticipantJoin({
+      await db.logParticipantJoin({
         meetingHistoryId: historyId,
         userId: authUser ? authUser.id : null,
         displayName: hostName,
@@ -449,7 +604,7 @@ function createRequestHandler() {
 
       if (body.scheduledId) {
         try {
-          db.updateScheduledStatus(body.scheduledId, 'live', {
+          await db.updateScheduledStatus(body.scheduledId, 'live', {
             startedAt: new Date().toISOString(),
           });
         } catch (_) {}
@@ -457,7 +612,7 @@ function createRequestHandler() {
 
       const meeting = meetings.get(code);
       try {
-        db.upsertMembership({
+        await db.upsertMembership({
           code,
           userId: authUser ? authUser.id : null,
           participantId: hostId,
@@ -544,7 +699,7 @@ function createRequestHandler() {
       // Persistent membership: blocked/removed in DB
       let membership = null;
       try {
-        membership = db.getMembership(code, {
+        membership = await db.getMembership(code, {
           userId: authUser ? authUser.id : null,
           participantId,
         });
@@ -613,13 +768,13 @@ function createRequestHandler() {
       meeting.participants.set(pid, participant);
 
       if (status === 'ACTIVE' && meeting.historyId) {
-        db.logParticipantJoin({
+        await db.logParticipantJoin({
           meetingHistoryId: meeting.historyId,
           userId: authUser ? authUser.id : null,
           displayName: participantName,
           participantId: pid,
         });
-        db.updateMaxParticipants(
+        await db.updateMaxParticipants(
           meeting.historyId,
           [...meeting.participants.values()].filter((p) => p.status === 'ACTIVE').length
         );
@@ -634,7 +789,7 @@ function createRequestHandler() {
           waiting: getWaitingList(meeting),
         });
         try {
-          db.upsertMembership({
+          await db.upsertMembership({
             code,
             userId: authUser ? authUser.id : null,
             participantId: pid,
@@ -662,7 +817,7 @@ function createRequestHandler() {
       }
 
       try {
-        db.upsertMembership({
+        await db.upsertMembership({
           code,
           userId: authUser ? authUser.id : null,
           participantId: pid,
@@ -770,7 +925,7 @@ function createRequestHandler() {
         else scheduledEnd = endDate.toISOString();
       }
       const code = generateCode();
-      const row = db.createScheduledMeeting({
+      const row = await db.createScheduledMeeting({
         code,
         name,
         hostUserId: authUser.id,
@@ -797,7 +952,7 @@ function createRequestHandler() {
     try {
       const authUser = await getAuthUser(req);
       if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
-      const rows = db.getScheduledForUser(authUser.id, 50);
+      const rows = await db.getScheduledForUser(authUser.id, 50);
       return sendJSON(res, 200, {
         meetings: rows.map((r) => ({
           id: r.id,
@@ -824,7 +979,7 @@ function createRequestHandler() {
       if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
       const id = parseInt(urlPath.split('/').pop(), 10);
       if (!id) return sendJSON(res, 400, { error: 'Invalid id' });
-      db.deleteScheduled(id, authUser.id);
+      await db.deleteScheduled(id, authUser.id);
       return sendJSON(res, 200, { ok: true });
     } catch (e) {
       return sendJSON(res, 400, { error: e.message || 'Bad request' });
@@ -837,7 +992,7 @@ function createRequestHandler() {
       if (!authUser || !authUser.id) return sendJSON(res, 401, { error: 'Login required' });
       const body = await parseBody(req);
       const id = body.id;
-      const row = db.getScheduledById(id);
+      const row = await db.getScheduledById(id);
       if (!row || row.host_user_id !== authUser.id) {
         return sendJSON(res, 404, { error: 'Scheduled meeting not found' });
       }
@@ -868,7 +1023,7 @@ function createRequestHandler() {
         meeting.lastActivity = Date.now();
 
         if (meeting.historyId) {
-          db.logParticipantLeave({
+          await db.logParticipantLeave({
             meetingHistoryId: meeting.historyId,
             participantId,
           });
@@ -896,7 +1051,7 @@ function createRequestHandler() {
   // ----- Phase 2: templates -----
   if (urlPath === '/api/templates' && req.method === 'GET') {
     try {
-      const rows = db.listTemplates();
+      const rows = await db.listTemplates();
       return sendJSON(res, 200, {
         templates: rows.map((r) => ({
           id: r.id,
@@ -918,7 +1073,7 @@ function createRequestHandler() {
       if (!code) return sendJSON(res, 400, { error: 'code required' });
       const meeting = meetings.get(code);
       const live = meeting && Array.isArray(meeting.activityLive) ? meeting.activityLive.slice(-50) : [];
-      const rows = db.getActivityForCode(code, 100);
+      const rows = await db.getActivityForCode(code, 100);
       return sendJSON(res, 200, {
         live,
         history: rows.map((r) => ({
@@ -940,7 +1095,7 @@ function createRequestHandler() {
       const code = (parsed.searchParams.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       const meeting = meetings.get(code);
       const active = meeting?.recording || null;
-      const past = code ? db.getRecordingsForCode(code, 10) : [];
+      const past = code ? await db.getRecordingsForCode(code, 10) : [];
       return sendJSON(res, 200, { recording: active, past });
     } catch (e) {
       return sendJSON(res, 500, { error: e.message || 'Failed' });
