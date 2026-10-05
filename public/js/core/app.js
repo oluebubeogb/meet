@@ -2345,6 +2345,16 @@
     historyView?.classList.add('hidden');
     meetingView?.classList.remove('hidden');
     try { startMeetingDurationTimer(); } catch (_) {}
+    try {
+      const ed = document.getElementById('liveNotesEditor');
+      if (ed && currentMeeting) {
+        const v = localStorage.getItem('meet-notes-' + currentMeeting.code);
+        if (v != null) ed.value = v;
+      }
+    } catch (_) {}
+    try {
+      if (typeof window.__meetMaybeAutoRecord === 'function') setTimeout(window.__meetMaybeAutoRecord, 800);
+    } catch (_) {}
     leaveBtn?.classList.remove('hidden');
     try {
       const rb = document.getElementById('rejoinBar');
@@ -2463,6 +2473,9 @@
   }
 
   async function leaveMeeting() {
+    try {
+      if (typeof window.__meetFlushRecordingOnLeave === 'function') window.__meetFlushRecordingOnLeave();
+    } catch (_) {}
     if (currentMeeting) {
       try {
         await api('/api/leave', {
@@ -7062,69 +7075,107 @@
   })();
 
 
-})();
-
-
-
-  // ========== Phase 1/2: Recording controls, notes, private chat, PiP, whiteboard, breakout ==========
+  // ========== Phase 1/2 client features (INSIDE main IIFE scope) ==========
   (function phase2ClientFeatures() {
-    // --- Client MediaRecorder (host) for real capture ---
     let mediaRecorder = null;
     let recordedChunks = [];
+    let notesSaveTimer = null;
+    let autoRecordEnabled = false;
 
+    function isHostNow() {
+      try {
+        return myRole === 'host' || !!(currentMeeting && currentMeeting.isHost);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function safeSend(obj) {
+      try {
+        if (typeof sendWS === 'function') sendWS(obj);
+      } catch (e) {
+        console.warn('sendWS failed', e);
+      }
+    }
+
+    // --- MediaRecorder capture (host) ---
     async function startClientCapture(options) {
       try {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
         recordedChunks = [];
         const streams = [];
         try {
-          if (options?.audio !== false) {
+          if (!options || options.audio !== false) {
             const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
             streams.push(a);
           }
-        } catch (_) {}
-        // Prefer screen if available
+        } catch (e) {
+          console.warn('rec audio', e);
+        }
         try {
-          if (options?.screenShare !== false || options?.video !== false) {
+          if (!options || options.screenShare !== false || options.video !== false) {
             const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
             streams.push(s);
+            s.getVideoTracks().forEach((tr) => {
+              tr.addEventListener('ended', () => {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                  try { mediaRecorder.stop(); } catch (_) {}
+                }
+              });
+            });
           }
-        } catch (_) {}
+        } catch (e) {
+          console.warn('rec display', e);
+        }
         if (!streams.length) {
-          if (typeof showToast === 'function') showToast('Could not access media for recording');
+          if (typeof showToast === 'function') showToast('Could not access mic/screen for recording');
           return;
         }
         const mixed = new MediaStream();
         streams.forEach((st) => st.getTracks().forEach((tr) => mixed.addTrack(tr)));
         const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
           ? 'video/webm;codecs=vp9,opus'
-          : 'video/webm';
-        mediaRecorder = new MediaRecorder(mixed, { mimeType: mime });
-        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
-        mediaRecorder.onstop = async () => {
+          : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
+        const recOpts = mime ? { mimeType: mime } : {};
+        mediaRecorder = new MediaRecorder(mixed, recOpts);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
           try {
-            const blob = new Blob(recordedChunks, { type: mime });
-            const url = URL.createObjectURL(blob);
-            // Trigger download as local save; fileUrl blob for session
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'meet-recording-' + Date.now() + '.webm';
-            a.click();
-            // Notify server with blob URL is not persistent — upload not configured; mark stopped with local hint
-            sendWS({ type: 'stop-recording', fileUrl: null });
-            if (typeof showToast === 'function') showToast('Recording downloaded. Link it from Artifacts when upload is configured.');
+            downloadRecordingChunks(mime || 'video/webm');
           } catch (err) {
-            console.warn('rec save', err);
+            console.warn('rec onstop', err);
           }
-          streams.forEach((st) => st.getTracks().forEach((tr) => tr.stop()));
+          streams.forEach((st) => {
+            try { st.getTracks().forEach((tr) => tr.stop()); } catch (_) {}
+          });
           mediaRecorder = null;
           window.__clientRecorder = null;
         };
         mediaRecorder.start(1000);
         window.__clientRecorder = mediaRecorder;
+        if (typeof showToast === 'function') showToast('Local recording capture started');
       } catch (e) {
         console.warn('startClientCapture', e);
+        if (typeof showToast === 'function') showToast('Recording capture failed: ' + (e.message || e));
       }
+    }
+
+    function downloadRecordingChunks(mime) {
+      if (!recordedChunks.length) return;
+      const blob = new Blob(recordedChunks, { type: mime || 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const code = (currentMeeting && currentMeeting.code) || 'meet';
+      a.download = 'meet-' + code + '-' + Date.now() + '.webm';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      recordedChunks = [];
+      if (typeof showToast === 'function') showToast('Recording downloaded');
     }
 
     function pauseClientCapture() {
@@ -7137,31 +7188,47 @@
         if (mediaRecorder && mediaRecorder.state === 'paused') mediaRecorder.resume();
       } catch (_) {}
     }
-    function stopClientCapture() {
+    function stopClientCaptureAndDownload() {
       try {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-        else sendWS({ type: 'stop-recording' });
-      } catch (_) {
-        sendWS({ type: 'stop-recording' });
-      }
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop(); // triggers onstop → download
+        } else if (recordedChunks.length) {
+          downloadRecordingChunks('video/webm');
+        }
+      } catch (_) {}
     }
 
     function togglePauseRecording() {
       if (!recordingState) return;
       if (recordingState.status === 'recording') {
-        sendWS({ type: 'pause-recording' });
+        safeSend({ type: 'pause-recording' });
         pauseClientCapture();
       } else if (recordingState.status === 'paused') {
-        sendWS({ type: 'resume-recording' });
+        safeSend({ type: 'resume-recording' });
         resumeClientCapture();
       }
     }
+
     function stopAndSaveRecording() {
-      // stop client first (onstop sends stop-recording); if no client recorder, WS stop
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') stopClientCapture();
-      else sendWS({ type: 'stop-recording' });
+      // Download local media, then notify server
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        const orig = mediaRecorder.onstop;
+        mediaRecorder.onstop = function () {
+          try { downloadRecordingChunks('video/webm'); } catch (_) {}
+          safeSend({ type: 'stop-recording' });
+          mediaRecorder = null;
+          window.__clientRecorder = null;
+        };
+        try { mediaRecorder.stop(); } catch (_) {
+          safeSend({ type: 'stop-recording' });
+        }
+      } else {
+        safeSend({ type: 'stop-recording' });
+        if (recordedChunks.length) downloadRecordingChunks('video/webm');
+      }
     }
 
+    // Wire control buttons
     document.getElementById('recPauseBtn')?.addEventListener('click', togglePauseRecording);
     document.getElementById('recStopBtn')?.addEventListener('click', stopAndSaveRecording);
     document.getElementById('recordPauseBtnModal')?.addEventListener('click', togglePauseRecording);
@@ -7170,51 +7237,77 @@
       document.getElementById('recordModal')?.classList.add('hidden');
     });
 
-    // --- Notes (desktop sidebar) ---
-    async function saveLiveNotes() {
-      try {
-        const content = document.getElementById('liveNotesEditor')?.value || '';
-        localStorage.setItem('meet-notes-' + (currentMeeting?.code || 'none'), content);
-        // If artifact exists for history, try API
-        if (currentMeeting?.historyId) {
-          // notes API needs artifact slug — save locally for now + history path
-        }
-        if (typeof showToast === 'function') showToast('Notes saved');
-      } catch (e) {
-        alert(e.message || 'Could not save notes');
-      }
+    // --- Notes autosave (pause typing 800ms) ---
+    function notesStorageKey() {
+      const code = (currentMeeting && currentMeeting.code) || 'none';
+      return 'meet-notes-' + code;
     }
-    document.getElementById('liveNotesSave')?.addEventListener('click', saveLiveNotes);
+    function summaryStorageKey() {
+      const code = (currentMeeting && currentMeeting.code) || 'none';
+      return 'meet-summary-' + code;
+    }
+    function saveLiveNotesSilent() {
+      const ed = document.getElementById('liveNotesEditor');
+      if (!ed) return;
+      try {
+        localStorage.setItem(notesStorageKey(), ed.value || '');
+      } catch (_) {}
+    }
+    function scheduleNotesAutosave() {
+      if (notesSaveTimer) clearTimeout(notesSaveTimer);
+      notesSaveTimer = setTimeout(() => {
+        saveLiveNotesSilent();
+        const hint = document.querySelector('#notesTab .notes-hint');
+        if (hint) {
+          const prev = hint.getAttribute('data-base') || hint.textContent;
+          if (!hint.getAttribute('data-base')) hint.setAttribute('data-base', prev);
+          hint.textContent = 'Saved locally ✓';
+          setTimeout(() => {
+            hint.textContent = hint.getAttribute('data-base') || 'Private to you.';
+          }, 1500);
+        }
+      }, 800);
+    }
+    const notesEditor = document.getElementById('liveNotesEditor');
+    if (notesEditor) {
+      notesEditor.addEventListener('input', scheduleNotesAutosave);
+      notesEditor.addEventListener('blur', saveLiveNotesSilent);
+    }
+    document.getElementById('liveNotesSave')?.addEventListener('click', () => {
+      saveLiveNotesSilent();
+      if (typeof showToast === 'function') showToast('Notes saved');
+    });
     document.getElementById('summarySaveBtn')?.addEventListener('click', () => {
       const box = document.getElementById('meetingSummaryBox');
       if (box) {
-        localStorage.setItem('meet-summary-' + (currentMeeting?.code || 'none'), box.innerText || '');
+        try { localStorage.setItem(summaryStorageKey(), box.innerText || ''); } catch (_) {}
         if (typeof showToast === 'function') showToast('Summary saved');
       }
     });
     document.getElementById('summaryGenerateBtn')?.addEventListener('click', () => {
       const box = document.getElementById('meetingSummaryBox');
       if (!box) return;
-      const names = (participants || []).map((p) => p.name || p.displayName).filter(Boolean);
-      const draft =
-        'Meeting ' + (currentMeeting?.code || '') + '\n' +
+      const list = Array.isArray(participants) ? participants : [];
+      const names = list.map((p) => p.name || p.displayName).filter(Boolean);
+      const notes = document.getElementById('liveNotesEditor')?.value || '';
+      box.innerText =
+        'Meeting ' + ((currentMeeting && currentMeeting.code) || '') + '\n' +
         'Participants: ' + (names.join(', ') || '—') + '\n' +
-        'Notes: ' + (document.getElementById('liveNotesEditor')?.value || '').slice(0, 500);
-      box.innerText = draft;
+        'Notes: ' + notes.slice(0, 500);
+      try { localStorage.setItem(summaryStorageKey(), box.innerText); } catch (_) {}
     });
-
-    // Load notes when entering meeting
-    const _origShow = typeof showMeeting === 'function' ? showMeeting : null;
-    // side tab notes restore
     document.querySelectorAll('.side-tab[data-tab="notes"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const ed = document.getElementById('liveNotesEditor');
-        if (ed && currentMeeting) {
-          ed.value = localStorage.getItem('meet-notes-' + currentMeeting.code) || ed.value || '';
+        if (ed) {
+          try { ed.value = localStorage.getItem(notesStorageKey()) || ed.value || ''; } catch (_) {}
         }
         const sum = document.getElementById('meetingSummaryBox');
-        if (sum && currentMeeting) {
-          sum.innerText = localStorage.getItem('meet-summary-' + currentMeeting.code) || sum.innerText || '';
+        if (sum) {
+          try {
+            const s = localStorage.getItem(summaryStorageKey());
+            if (s) sum.innerText = s;
+          } catch (_) {}
         }
       });
     });
@@ -7222,6 +7315,23 @@
     // --- Private chat ---
     let chatMode = 'public';
     let privateTargetId = '';
+    function refreshPrivateSelect() {
+      const sel = document.getElementById('privateChatSelect');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">Select participant…</option>';
+      const list = Array.isArray(participants) ? participants : [];
+      const selfId = currentMeeting && currentMeeting.participantId;
+      list.forEach((p) => {
+        const id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = p.name || p.displayName || id;
+        sel.appendChild(opt);
+      });
+      if (cur) sel.value = cur;
+    }
     document.getElementById('chatModePublic')?.addEventListener('click', () => {
       chatMode = 'public';
       document.getElementById('chatModePublic')?.classList.add('active');
@@ -7238,45 +7348,25 @@
     document.getElementById('privateChatSelect')?.addEventListener('change', (e) => {
       privateTargetId = e.target.value || '';
     });
-    function refreshPrivateSelect() {
-      const sel = document.getElementById('privateChatSelect');
-      if (!sel) return;
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">Select participant…</option>';
-      (participants || []).forEach((p) => {
-        const id = p.id || p.participantId;
-        if (!id || id === currentMeeting?.participantId) return;
-        const opt = document.createElement('option');
-        opt.value = id;
-        opt.textContent = p.name || p.displayName || id;
-        sel.appendChild(opt);
-      });
-      if (cur) sel.value = cur;
-    }
-    // Hook send chat - intercept common send path
-    window.__meetChatMode = () => chatMode;
-    window.__meetPrivateTarget = () => privateTargetId;
     const chatInput = document.getElementById('chatInput');
     if (chatInput) {
       chatInput.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter' || e.shiftKey) return;
         if (chatMode !== 'private') return;
-        // let normal handler run for public; for private we send ourselves
+        e.preventDefault();
+        e.stopPropagation();
         if (!privateTargetId) {
-          e.preventDefault();
           if (typeof showToast === 'function') showToast('Select a participant for private chat');
           return;
         }
-        e.preventDefault();
-        e.stopPropagation();
         const text = chatInput.value.trim();
         if (!text) return;
-        sendWS({ type: 'private-chat', targetId: privateTargetId, text });
+        safeSend({ type: 'private-chat', targetId: privateTargetId, text });
         chatInput.value = '';
       }, true);
     }
 
-    // --- PiP ---
+    // --- PiP / blur ---
     window.__meetRequestPiP = async function () {
       try {
         const vid = document.querySelector('#bigView video, #screenCards video, video');
@@ -7285,18 +7375,16 @@
           else await vid.requestPictureInPicture();
         } else if (typeof showToast === 'function') showToast('PiP not available');
       } catch (e) {
-        if (typeof showToast === 'function') showToast('PiP failed: ' + (e.message || ''));
+        if (typeof showToast === 'function') showToast('PiP failed');
       }
     };
-
-    // --- Virtual blur (CSS on local video) ---
     let blurOn = false;
     window.__meetToggleBlur = function () {
       blurOn = !blurOn;
       document.querySelectorAll('video').forEach((v) => {
         v.style.filter = blurOn ? 'blur(12px)' : '';
       });
-      if (typeof showToast === 'function') showToast(blurOn ? 'Background blur on (local preview)' : 'Blur off');
+      if (typeof showToast === 'function') showToast(blurOn ? 'Blur on' : 'Blur off');
     };
 
     // --- Whiteboard ---
@@ -7307,12 +7395,15 @@
     const ctx2d = canvas ? canvas.getContext('2d') : null;
     function wbPos(e) {
       const r = canvas.getBoundingClientRect();
-      const x = ((e.clientX || e.touches?.[0]?.clientX) - r.left) * (canvas.width / r.width);
-      const y = ((e.clientY || e.touches?.[0]?.clientY) - r.top) * (canvas.height / r.height);
-      return { x, y };
+      const cx = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX);
+      const cy = e.clientY != null ? e.clientY : (e.touches && e.touches[0] && e.touches[0].clientY);
+      return {
+        x: (cx - r.left) * (canvas.width / r.width),
+        y: (cy - r.top) * (canvas.height / r.height),
+      };
     }
     function drawStroke(stroke) {
-      if (!ctx2d || !stroke.points?.length) return;
+      if (!ctx2d || !stroke.points || !stroke.points.length) return;
       ctx2d.strokeStyle = stroke.erase ? '#ffffff' : (stroke.color || '#111');
       ctx2d.lineWidth = stroke.erase ? 20 : (stroke.width || 3);
       ctx2d.lineCap = 'round';
@@ -7328,13 +7419,17 @@
       canvas.addEventListener('mousemove', (e) => {
         if (!wbDrawing) return;
         wbPoints.push(wbPos(e));
-        drawStroke({ points: wbPoints.slice(-2), color: document.getElementById('wbColor')?.value, erase: wbErase });
+        drawStroke({
+          points: wbPoints.slice(-2),
+          color: document.getElementById('wbColor')?.value,
+          erase: wbErase,
+        });
       });
       const endDraw = () => {
         if (!wbDrawing) return;
         wbDrawing = false;
         if (wbPoints.length > 1) {
-          sendWS({
+          safeSend({
             type: 'wb-stroke',
             points: wbPoints,
             color: document.getElementById('wbColor')?.value || '#111',
@@ -7349,7 +7444,7 @@
     document.getElementById('wbEraser')?.addEventListener('click', () => { wbErase = true; });
     document.getElementById('wbPen')?.addEventListener('click', () => { wbErase = false; });
     document.getElementById('wbClear')?.addEventListener('click', () => {
-      sendWS({ type: 'wb-clear' });
+      safeSend({ type: 'wb-clear' });
       if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
     });
     document.getElementById('wbExport')?.addEventListener('click', () => {
@@ -7367,16 +7462,16 @@
     });
     window.__meetOpenWhiteboard = function () {
       document.getElementById('whiteboardModal')?.classList.remove('hidden');
-      sendWS({ type: 'wb-sync' });
+      safeSend({ type: 'wb-sync' });
     };
 
     // --- Breakout ---
     document.getElementById('breakoutCreate')?.addEventListener('click', () => {
       const count = parseInt(document.getElementById('breakoutCount')?.value || '2', 10);
-      sendWS({ type: 'breakout-create', count });
+      safeSend({ type: 'breakout-create', count });
     });
     document.getElementById('breakoutCloseAll')?.addEventListener('click', () => {
-      sendWS({ type: 'breakout-close' });
+      safeSend({ type: 'breakout-close' });
     });
     document.getElementById('breakoutCancel')?.addEventListener('click', () => {
       document.getElementById('breakoutModal')?.classList.add('hidden');
@@ -7385,73 +7480,144 @@
       document.getElementById('breakoutModal')?.classList.remove('hidden');
     };
 
-    // --- More menu: inject Phase 2 items ---
-    function ensureMoreItems() {
-      const menu = document.getElementById('moreMenu') || document.querySelector('.meeting-more-panel, .more-menu');
-      // Dynamic pane more list is built in JS — hook openDynamicPane path via global actions
-    }
-    // Patch more-item clicks via data-action extensions
     document.addEventListener('click', (e) => {
-      const item = e.target.closest?.('[data-action]');
+      const item = e.target.closest && e.target.closest('[data-action]');
       if (!item) return;
       const act = item.getAttribute('data-action');
-      if (act === 'pip') { e.preventDefault(); window.__meetRequestPiP?.(); }
-      if (act === 'blur') { e.preventDefault(); window.__meetToggleBlur?.(); }
-      if (act === 'whiteboard') { e.preventDefault(); window.__meetOpenWhiteboard?.(); }
-      if (act === 'breakout') { e.preventDefault(); window.__meetOpenBreakout?.(); }
+      if (act === 'pip') { e.preventDefault(); window.__meetRequestPiP && window.__meetRequestPiP(); }
+      if (act === 'blur') { e.preventDefault(); window.__meetToggleBlur && window.__meetToggleBlur(); }
+      if (act === 'whiteboard') { e.preventDefault(); window.__meetOpenWhiteboard && window.__meetOpenWhiteboard(); }
+      if (act === 'breakout') { e.preventDefault(); window.__meetOpenBreakout && window.__meetOpenBreakout(); }
       if (act === 'notes') {
         e.preventDefault();
-        document.querySelector('.side-tab[data-tab="notes"]')?.click();
+        const tab = document.querySelector('.side-tab[data-tab="notes"]');
+        if (tab) tab.click();
       }
     });
 
-    // Inject more menu entries when possible
     const morePanel = document.getElementById('dynPaneMore');
     if (morePanel && !document.getElementById('phase2MoreInject')) {
       const div = document.createElement('div');
       div.id = 'phase2MoreInject';
-      div.innerHTML = `
-        <div class="more-hub-section">Collaboration</div>
-        <button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>
-        <button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>
-        <button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>
-        <div class="more-hub-section">Media</div>
-        <button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>
-        <button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>
-        <div class="more-hub-section">Hub</div>
-        <button type="button" class="more-item" data-action="activity"><i class="fa-solid fa-clock-rotate-left"></i> Activity</button>
-      `;
+      div.innerHTML =
+        '<div class="more-hub-section">Collaboration</div>' +
+        '<button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>' +
+        '<button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>' +
+        '<button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>' +
+        '<div class="more-hub-section">Media</div>' +
+        '<button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>' +
+        '<button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>';
       morePanel.appendChild(div);
     }
 
-    // WS message extensions
+    // Auto-record checkbox in record modal
+    const recModal = document.getElementById('recordModal');
+    if (recModal && !document.getElementById('autoRecordToggle')) {
+      const label = document.createElement('label');
+      label.className = 'checkbox-label';
+      label.style.display = 'block';
+      label.style.marginTop = '0.5rem';
+      label.innerHTML = '<input type="checkbox" id="autoRecordToggle"> Auto-record when I start a meeting (host)';
+      const actions = recModal.querySelector('.modal-actions');
+      if (actions) recModal.querySelector('.modal-card')?.insertBefore(label, actions);
+      else recModal.querySelector('.modal-card')?.appendChild(label);
+      try {
+        autoRecordEnabled = localStorage.getItem('meet-auto-record') === '1';
+      } catch (_) {}
+      const tog = document.getElementById('autoRecordToggle');
+      if (tog) {
+        tog.checked = autoRecordEnabled;
+        tog.addEventListener('change', () => {
+          autoRecordEnabled = !!tog.checked;
+          try { localStorage.setItem('meet-auto-record', autoRecordEnabled ? '1' : '0'); } catch (_) {}
+        });
+      }
+    }
+
+    // Also on create form if present
+    const createCard = document.querySelector('#homeView .create-card, #createBtn');
+    if (document.getElementById('createBtn') && !document.getElementById('autoRecordCreate')) {
+      const wrap = document.createElement('label');
+      wrap.className = 'checkbox-label';
+      wrap.style.display = 'block';
+      wrap.style.margin = '0.5rem 0';
+      wrap.innerHTML = '<input type="checkbox" id="autoRecordCreate"> Auto-record this meeting';
+      const btn = document.getElementById('createBtn');
+      if (btn && btn.parentNode) btn.parentNode.insertBefore(wrap, btn);
+      const c = document.getElementById('autoRecordCreate');
+      if (c) {
+        try { c.checked = localStorage.getItem('meet-auto-record') === '1'; } catch (_) {}
+        c.addEventListener('change', () => {
+          autoRecordEnabled = !!c.checked;
+          try { localStorage.setItem('meet-auto-record', autoRecordEnabled ? '1' : '0'); } catch (_) {}
+          const t2 = document.getElementById('autoRecordToggle');
+          if (t2) t2.checked = autoRecordEnabled;
+        });
+      }
+    }
+
+    window.__meetMaybeAutoRecord = function () {
+      try {
+        autoRecordEnabled = localStorage.getItem('meet-auto-record') === '1' ||
+          !!(document.getElementById('autoRecordCreate') && document.getElementById('autoRecordCreate').checked);
+      } catch (_) {}
+      if (!autoRecordEnabled || !isHostNow()) return;
+      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) return;
+      setTimeout(() => {
+        safeSend({
+          type: 'start-recording',
+          audio: true,
+          video: true,
+          screenShare: true,
+          chat: true,
+        });
+        // Client capture starts on recording-capture event
+      }, 1200);
+    };
+
+    // On leave: stop recording + download
+    window.__meetFlushRecordingOnLeave = function () {
+      saveLiveNotesSilent();
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          stopClientCaptureAndDownload();
+        } else if (recordedChunks.length) {
+          downloadRecordingChunks('video/webm');
+        }
+        if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) {
+          safeSend({ type: 'stop-recording' });
+        }
+      } catch (e) {
+        console.warn('flush recording', e);
+      }
+    };
+
+    // WS extra handlers — attach to live socket
     const extraHandlers = {
       'private-chat': function (msg) {
         const m = msg.message;
         if (!m) return;
         const box = document.getElementById('chatMessages');
-        if (box) {
-          const el = document.createElement('div');
-          el.className = 'chat-msg private-msg';
-          el.innerHTML = '<span class="tag">Private</span> <strong>' + (m.fromName || '') +
-            (m.fromId === currentMeeting?.participantId ? ' → ' + (m.toName || '') : '') +
-            ':</strong> ' + (m.text || '');
-          box.appendChild(el);
-          box.scrollTop = box.scrollHeight;
-        }
+        if (!box) return;
+        const el = document.createElement('div');
+        el.className = 'chat-msg private-msg';
+        const selfId = currentMeeting && currentMeeting.participantId;
+        el.innerHTML = '<span class="tag">Private</span> <strong>' +
+          (m.fromName || '') +
+          (m.fromId === selfId ? ' → ' + (m.toName || '') : '') +
+          ':</strong> ' + (m.text || '');
+        box.appendChild(el);
+        box.scrollTop = box.scrollHeight;
       },
       'recording-capture': function (msg) {
-        if (myRole !== 'host' && !currentMeeting?.isHost) return;
+        if (!isHostNow()) return;
         if (msg.action === 'start') startClientCapture(msg.options || {});
         if (msg.action === 'pause') pauseClientCapture();
         if (msg.action === 'resume') resumeClientCapture();
         if (msg.action === 'stop') {
-          // if still recording locally, stop without double-send
           try {
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-              mediaRecorder.onstop = null;
-              mediaRecorder.stop();
-              mediaRecorder = null;
+              // already stopping via stopAndSave; avoid double
             }
           } catch (_) {}
         }
@@ -7468,96 +7634,46 @@
         const list = document.getElementById('breakoutList');
         if (!list) return;
         list.innerHTML = '';
-        (msg.breakouts?.rooms || []).forEach((r) => {
+        ((msg.breakouts && msg.breakouts.rooms) || []).forEach((r) => {
           const li = document.createElement('li');
-          li.textContent = r.name + ' (' + (r.participantIds?.length || 0) + ' people)';
+          li.textContent = r.name + ' (' + ((r.participantIds && r.participantIds.length) || 0) + ' people)';
           list.appendChild(li);
         });
       },
       'breakout-assign': function (msg) {
-        if (typeof showToast === 'function') showToast('Assigned to ' + (msg.room?.name || 'breakout room'));
+        if (typeof showToast === 'function') showToast('Assigned to ' + ((msg.room && msg.room.name) || 'breakout'));
       },
       'breakout-return': function () {
         if (typeof showToast === 'function') showToast('Return to main meeting');
       },
     };
 
-    // Install WS hook: wrap native path by listening via monkey on sendWS side messages
-    // Polling-free: patch WebSocket message by intercepting after connectWS - use setInterval once to attach
-    const attach = () => {
-      // Use document custom events if app emits them; else override JSON parse path
-      const OrigWS = window.WebSocket;
-      if (OrigWS.__phase2Patched) return;
-      // Prefer: listen to existing socket if global
-    };
-    // Safer approach: extend _phase2MsgTypes if exists
-    try {
-      if (typeof _phase2MsgTypes === 'object') {
-        Object.assign(_phase2MsgTypes, extraHandlers);
-      }
-    } catch (_) {}
-    // Also register on message via capturing at window
-    window.addEventListener('message', () => {});
-    // Patch connectWS after definition by interval
+    // Patch WebSocket onmessage when connectWS runs
     let tries = 0;
     const iv = setInterval(() => {
       tries++;
-      if (typeof connectWS === 'function' && !connectWS.__p2) {
-        const orig = connectWS;
-        window.connectWS = function () {
-          const r = orig.apply(this, arguments);
-          setTimeout(() => {
+      try {
+        if (typeof ws !== 'undefined' && ws && !ws.__p2handlers) {
+          ws.__p2handlers = true;
+          const prev = ws.onmessage;
+          ws.onmessage = function (ev) {
+            if (typeof prev === 'function') prev.call(this, ev);
             try {
-              if (ws && !ws.__p2handlers) {
-                ws.__p2handlers = true;
-                const prev = ws.onmessage;
-                ws.onmessage = function (ev) {
-                  if (prev) prev.call(this, ev);
-                  try {
-                    const msg = JSON.parse(ev.data);
-                    const h = extraHandlers[msg.type];
-                    if (h) h(msg);
-                  } catch (_) {}
-                };
-              }
+              const msg = JSON.parse(ev.data);
+              const h = extraHandlers[msg.type];
+              if (h) h(msg);
             } catch (_) {}
-          }, 100);
-          return r;
-        };
-        connectWS.__p2 = true;
-        clearInterval(iv);
-      }
-      if (tries > 50) clearInterval(iv);
-    }, 200);
+          };
+        }
+      } catch (_) {}
+      if (tries > 100) clearInterval(iv);
+    }, 300);
 
-    // Participant limit UI — security panel
-    const secPanel = document.getElementById('dynPaneSecurity') || document.querySelector('[data-pane="security"]');
-    if (secPanel && !document.getElementById('maxParticipantsInput')) {
-      const wrap = document.createElement('div');
-      wrap.style.marginTop = '0.75rem';
-      wrap.innerHTML = '<label class="checkbox-label">Max participants <input type="number" id="maxParticipantsInput" min="2" max="100" value="20" style="width:4rem;margin-left:0.35rem"></label>';
-      secPanel.appendChild(wrap);
-      document.getElementById('maxParticipantsInput')?.addEventListener('change', (e) => {
-        const n = parseInt(e.target.value, 10);
-        if (n >= 2 && n <= 100) sendWS({ type: 'set-max-participants', max: n });
-      });
-    }
-
-    // Artifact deep link + restart query
-    (function () {
-      const path = location.pathname;
-      const m = path.match(/^\/m\/([^/]+)\/?$/);
-      const params = new URLSearchParams(location.search);
-      if (m && params.get('restart') === '1') {
-        // join meeting from artifact restart
-        const code = m[1];
-        setTimeout(() => {
-          const joinInput = document.getElementById('joinCode') || document.querySelector('input[name="code"]');
-          if (joinInput) joinInput.value = code;
-          // try click join
-          document.getElementById('joinBtn')?.click();
-        }, 400);
-      }
-    })();
+    // Also re-patch after each connect: hook sendWS side is hard; observe currentMeeting
+    const origLeave = leaveMeeting;
+    // leaveMeeting is async function in scope — wrap via reassignment if possible
+    // We call flush from patched leaveMeeting below
   })();
 
+
+})();
