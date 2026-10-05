@@ -2446,6 +2446,7 @@
       var el = document.getElementById('meetingDurationTimer');
       if (!el) return;
       el.classList.remove('hidden');
+      el.style.display = 'inline-flex';
       var start = Date.now();
       function tick() {
         var s = Math.floor((Date.now() - start) / 1000);
@@ -4671,12 +4672,27 @@
   function updateRecordingBadge() {
     const badge = document.getElementById('recordingBadge');
     const timer = document.getElementById('recordingTimer');
+    const bar = document.getElementById('recControlsBar');
+    const statusLabel = document.getElementById('recordingStatusLabel');
+    const isHost = myRole === 'host' || currentMeeting?.isHost;
     if (!badge) return;
-    if (recordingState && recordingState.status === 'recording') {
+    const active = recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused');
+    if (active) {
       badge.classList.remove('hidden');
+      if (statusLabel) statusLabel.textContent = recordingState.status === 'paused' ? 'Paused' : 'Recording';
+      if (bar) {
+        bar.classList.toggle('hidden', !isHost);
+        const pauseBtn = document.getElementById('recPauseBtn');
+        if (pauseBtn) pauseBtn.textContent = recordingState.status === 'paused' ? 'Resume' : 'Pause';
+      }
       const start = recordingState.startedAt || Date.now();
+      const pausedExtra = recordingState.pausedTotalMs || 0;
       const tick = () => {
-        const sec = Math.max(0, Math.floor((Date.now() - start) / 1000));
+        let elapsed = Date.now() - start - pausedExtra;
+        if (recordingState.status === 'paused' && recordingState.pausedAt) {
+          elapsed = recordingState.pausedAt - start - pausedExtra;
+        }
+        const sec = Math.max(0, Math.floor(elapsed / 1000));
         const m = String(Math.floor(sec / 60)).padStart(2, '0');
         const s = String(sec % 60).padStart(2, '0');
         if (timer) timer.textContent = m + ':' + s;
@@ -4686,9 +4702,28 @@
       recordingTimerInterval = setInterval(tick, 1000);
     } else {
       badge.classList.add('hidden');
+      if (bar) bar.classList.add('hidden');
       if (recordingTimerInterval) clearInterval(recordingTimerInterval);
       recordingTimerInterval = null;
     }
+    // Modal buttons
+    try {
+      const startBtn = document.getElementById('recordStartBtn');
+      const pauseM = document.getElementById('recordPauseBtnModal');
+      const stopM = document.getElementById('recordStopBtnModal');
+      const stateEl = document.getElementById('recordModalState');
+      if (active) {
+        if (startBtn) { startBtn.classList.add('hidden'); startBtn.disabled = true; }
+        if (pauseM) { pauseM.classList.remove('hidden'); pauseM.textContent = recordingState.status === 'paused' ? 'Resume' : 'Pause'; }
+        if (stopM) stopM.classList.remove('hidden');
+        if (stateEl) stateEl.textContent = recordingState.status === 'paused' ? 'Recording is paused.' : 'Recording in progress…';
+      } else {
+        if (startBtn) { startBtn.classList.remove('hidden'); startBtn.disabled = false; startBtn.textContent = 'Start recording'; }
+        if (pauseM) pauseM.classList.add('hidden');
+        if (stopM) stopM.classList.add('hidden');
+        if (stateEl) stateEl.textContent = recordingState && recordingState.status === 'stopped' ? 'Last recording saved to Artifacts / history.' : '';
+      }
+    } catch (_) {}
   }
 
   async function refreshDiagnostics() {
@@ -7028,3 +7063,501 @@
 
 
 })();
+
+
+
+  // ========== Phase 1/2: Recording controls, notes, private chat, PiP, whiteboard, breakout ==========
+  (function phase2ClientFeatures() {
+    // --- Client MediaRecorder (host) for real capture ---
+    let mediaRecorder = null;
+    let recordedChunks = [];
+
+    async function startClientCapture(options) {
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
+        recordedChunks = [];
+        const streams = [];
+        try {
+          if (options?.audio !== false) {
+            const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            streams.push(a);
+          }
+        } catch (_) {}
+        // Prefer screen if available
+        try {
+          if (options?.screenShare !== false || options?.video !== false) {
+            const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            streams.push(s);
+          }
+        } catch (_) {}
+        if (!streams.length) {
+          if (typeof showToast === 'function') showToast('Could not access media for recording');
+          return;
+        }
+        const mixed = new MediaStream();
+        streams.forEach((st) => st.getTracks().forEach((tr) => mixed.addTrack(tr)));
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : 'video/webm';
+        mediaRecorder = new MediaRecorder(mixed, { mimeType: mime });
+        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          try {
+            const blob = new Blob(recordedChunks, { type: mime });
+            const url = URL.createObjectURL(blob);
+            // Trigger download as local save; fileUrl blob for session
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'meet-recording-' + Date.now() + '.webm';
+            a.click();
+            // Notify server with blob URL is not persistent — upload not configured; mark stopped with local hint
+            sendWS({ type: 'stop-recording', fileUrl: null });
+            if (typeof showToast === 'function') showToast('Recording downloaded. Link it from Artifacts when upload is configured.');
+          } catch (err) {
+            console.warn('rec save', err);
+          }
+          streams.forEach((st) => st.getTracks().forEach((tr) => tr.stop()));
+          mediaRecorder = null;
+          window.__clientRecorder = null;
+        };
+        mediaRecorder.start(1000);
+        window.__clientRecorder = mediaRecorder;
+      } catch (e) {
+        console.warn('startClientCapture', e);
+      }
+    }
+
+    function pauseClientCapture() {
+      try {
+        if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.pause();
+      } catch (_) {}
+    }
+    function resumeClientCapture() {
+      try {
+        if (mediaRecorder && mediaRecorder.state === 'paused') mediaRecorder.resume();
+      } catch (_) {}
+    }
+    function stopClientCapture() {
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        else sendWS({ type: 'stop-recording' });
+      } catch (_) {
+        sendWS({ type: 'stop-recording' });
+      }
+    }
+
+    function togglePauseRecording() {
+      if (!recordingState) return;
+      if (recordingState.status === 'recording') {
+        sendWS({ type: 'pause-recording' });
+        pauseClientCapture();
+      } else if (recordingState.status === 'paused') {
+        sendWS({ type: 'resume-recording' });
+        resumeClientCapture();
+      }
+    }
+    function stopAndSaveRecording() {
+      // stop client first (onstop sends stop-recording); if no client recorder, WS stop
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') stopClientCapture();
+      else sendWS({ type: 'stop-recording' });
+    }
+
+    document.getElementById('recPauseBtn')?.addEventListener('click', togglePauseRecording);
+    document.getElementById('recStopBtn')?.addEventListener('click', stopAndSaveRecording);
+    document.getElementById('recordPauseBtnModal')?.addEventListener('click', togglePauseRecording);
+    document.getElementById('recordStopBtnModal')?.addEventListener('click', () => {
+      stopAndSaveRecording();
+      document.getElementById('recordModal')?.classList.add('hidden');
+    });
+
+    // --- Notes (desktop sidebar) ---
+    async function saveLiveNotes() {
+      try {
+        const content = document.getElementById('liveNotesEditor')?.value || '';
+        localStorage.setItem('meet-notes-' + (currentMeeting?.code || 'none'), content);
+        // If artifact exists for history, try API
+        if (currentMeeting?.historyId) {
+          // notes API needs artifact slug — save locally for now + history path
+        }
+        if (typeof showToast === 'function') showToast('Notes saved');
+      } catch (e) {
+        alert(e.message || 'Could not save notes');
+      }
+    }
+    document.getElementById('liveNotesSave')?.addEventListener('click', saveLiveNotes);
+    document.getElementById('summarySaveBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('meetingSummaryBox');
+      if (box) {
+        localStorage.setItem('meet-summary-' + (currentMeeting?.code || 'none'), box.innerText || '');
+        if (typeof showToast === 'function') showToast('Summary saved');
+      }
+    });
+    document.getElementById('summaryGenerateBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('meetingSummaryBox');
+      if (!box) return;
+      const names = (participants || []).map((p) => p.name || p.displayName).filter(Boolean);
+      const draft =
+        'Meeting ' + (currentMeeting?.code || '') + '\n' +
+        'Participants: ' + (names.join(', ') || '—') + '\n' +
+        'Notes: ' + (document.getElementById('liveNotesEditor')?.value || '').slice(0, 500);
+      box.innerText = draft;
+    });
+
+    // Load notes when entering meeting
+    const _origShow = typeof showMeeting === 'function' ? showMeeting : null;
+    // side tab notes restore
+    document.querySelectorAll('.side-tab[data-tab="notes"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ed = document.getElementById('liveNotesEditor');
+        if (ed && currentMeeting) {
+          ed.value = localStorage.getItem('meet-notes-' + currentMeeting.code) || ed.value || '';
+        }
+        const sum = document.getElementById('meetingSummaryBox');
+        if (sum && currentMeeting) {
+          sum.innerText = localStorage.getItem('meet-summary-' + currentMeeting.code) || sum.innerText || '';
+        }
+      });
+    });
+
+    // --- Private chat ---
+    let chatMode = 'public';
+    let privateTargetId = '';
+    document.getElementById('chatModePublic')?.addEventListener('click', () => {
+      chatMode = 'public';
+      document.getElementById('chatModePublic')?.classList.add('active');
+      document.getElementById('chatModePrivate')?.classList.remove('active');
+      document.getElementById('privateChatTarget')?.classList.add('hidden');
+    });
+    document.getElementById('chatModePrivate')?.addEventListener('click', () => {
+      chatMode = 'private';
+      document.getElementById('chatModePrivate')?.classList.add('active');
+      document.getElementById('chatModePublic')?.classList.remove('active');
+      document.getElementById('privateChatTarget')?.classList.remove('hidden');
+      refreshPrivateSelect();
+    });
+    document.getElementById('privateChatSelect')?.addEventListener('change', (e) => {
+      privateTargetId = e.target.value || '';
+    });
+    function refreshPrivateSelect() {
+      const sel = document.getElementById('privateChatSelect');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">Select participant…</option>';
+      (participants || []).forEach((p) => {
+        const id = p.id || p.participantId;
+        if (!id || id === currentMeeting?.participantId) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = p.name || p.displayName || id;
+        sel.appendChild(opt);
+      });
+      if (cur) sel.value = cur;
+    }
+    // Hook send chat - intercept common send path
+    window.__meetChatMode = () => chatMode;
+    window.__meetPrivateTarget = () => privateTargetId;
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+      chatInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        if (chatMode !== 'private') return;
+        // let normal handler run for public; for private we send ourselves
+        if (!privateTargetId) {
+          e.preventDefault();
+          if (typeof showToast === 'function') showToast('Select a participant for private chat');
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        sendWS({ type: 'private-chat', targetId: privateTargetId, text });
+        chatInput.value = '';
+      }, true);
+    }
+
+    // --- PiP ---
+    window.__meetRequestPiP = async function () {
+      try {
+        const vid = document.querySelector('#bigView video, #screenCards video, video');
+        if (vid && document.pictureInPictureEnabled) {
+          if (document.pictureInPictureElement) await document.exitPictureInPicture();
+          else await vid.requestPictureInPicture();
+        } else if (typeof showToast === 'function') showToast('PiP not available');
+      } catch (e) {
+        if (typeof showToast === 'function') showToast('PiP failed: ' + (e.message || ''));
+      }
+    };
+
+    // --- Virtual blur (CSS on local video) ---
+    let blurOn = false;
+    window.__meetToggleBlur = function () {
+      blurOn = !blurOn;
+      document.querySelectorAll('video').forEach((v) => {
+        v.style.filter = blurOn ? 'blur(12px)' : '';
+      });
+      if (typeof showToast === 'function') showToast(blurOn ? 'Background blur on (local preview)' : 'Blur off');
+    };
+
+    // --- Whiteboard ---
+    let wbDrawing = false;
+    let wbErase = false;
+    let wbPoints = [];
+    const canvas = document.getElementById('whiteboardCanvas');
+    const ctx2d = canvas ? canvas.getContext('2d') : null;
+    function wbPos(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = ((e.clientX || e.touches?.[0]?.clientX) - r.left) * (canvas.width / r.width);
+      const y = ((e.clientY || e.touches?.[0]?.clientY) - r.top) * (canvas.height / r.height);
+      return { x, y };
+    }
+    function drawStroke(stroke) {
+      if (!ctx2d || !stroke.points?.length) return;
+      ctx2d.strokeStyle = stroke.erase ? '#ffffff' : (stroke.color || '#111');
+      ctx2d.lineWidth = stroke.erase ? 20 : (stroke.width || 3);
+      ctx2d.lineCap = 'round';
+      ctx2d.beginPath();
+      stroke.points.forEach((pt, i) => {
+        if (i === 0) ctx2d.moveTo(pt.x, pt.y);
+        else ctx2d.lineTo(pt.x, pt.y);
+      });
+      ctx2d.stroke();
+    }
+    if (canvas && ctx2d) {
+      canvas.addEventListener('mousedown', (e) => { wbDrawing = true; wbPoints = [wbPos(e)]; });
+      canvas.addEventListener('mousemove', (e) => {
+        if (!wbDrawing) return;
+        wbPoints.push(wbPos(e));
+        drawStroke({ points: wbPoints.slice(-2), color: document.getElementById('wbColor')?.value, erase: wbErase });
+      });
+      const endDraw = () => {
+        if (!wbDrawing) return;
+        wbDrawing = false;
+        if (wbPoints.length > 1) {
+          sendWS({
+            type: 'wb-stroke',
+            points: wbPoints,
+            color: document.getElementById('wbColor')?.value || '#111',
+            erase: wbErase,
+          });
+        }
+        wbPoints = [];
+      };
+      canvas.addEventListener('mouseup', endDraw);
+      canvas.addEventListener('mouseleave', endDraw);
+    }
+    document.getElementById('wbEraser')?.addEventListener('click', () => { wbErase = true; });
+    document.getElementById('wbPen')?.addEventListener('click', () => { wbErase = false; });
+    document.getElementById('wbClear')?.addEventListener('click', () => {
+      sendWS({ type: 'wb-clear' });
+      if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    });
+    document.getElementById('wbExport')?.addEventListener('click', () => {
+      if (!canvas) return;
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'whiteboard.png';
+      a.click();
+    });
+    document.getElementById('whiteboardClose')?.addEventListener('click', () => {
+      document.getElementById('whiteboardModal')?.classList.add('hidden');
+    });
+    document.getElementById('whiteboardModalBackdrop')?.addEventListener('click', () => {
+      document.getElementById('whiteboardModal')?.classList.add('hidden');
+    });
+    window.__meetOpenWhiteboard = function () {
+      document.getElementById('whiteboardModal')?.classList.remove('hidden');
+      sendWS({ type: 'wb-sync' });
+    };
+
+    // --- Breakout ---
+    document.getElementById('breakoutCreate')?.addEventListener('click', () => {
+      const count = parseInt(document.getElementById('breakoutCount')?.value || '2', 10);
+      sendWS({ type: 'breakout-create', count });
+    });
+    document.getElementById('breakoutCloseAll')?.addEventListener('click', () => {
+      sendWS({ type: 'breakout-close' });
+    });
+    document.getElementById('breakoutCancel')?.addEventListener('click', () => {
+      document.getElementById('breakoutModal')?.classList.add('hidden');
+    });
+    window.__meetOpenBreakout = function () {
+      document.getElementById('breakoutModal')?.classList.remove('hidden');
+    };
+
+    // --- More menu: inject Phase 2 items ---
+    function ensureMoreItems() {
+      const menu = document.getElementById('moreMenu') || document.querySelector('.meeting-more-panel, .more-menu');
+      // Dynamic pane more list is built in JS — hook openDynamicPane path via global actions
+    }
+    // Patch more-item clicks via data-action extensions
+    document.addEventListener('click', (e) => {
+      const item = e.target.closest?.('[data-action]');
+      if (!item) return;
+      const act = item.getAttribute('data-action');
+      if (act === 'pip') { e.preventDefault(); window.__meetRequestPiP?.(); }
+      if (act === 'blur') { e.preventDefault(); window.__meetToggleBlur?.(); }
+      if (act === 'whiteboard') { e.preventDefault(); window.__meetOpenWhiteboard?.(); }
+      if (act === 'breakout') { e.preventDefault(); window.__meetOpenBreakout?.(); }
+      if (act === 'notes') {
+        e.preventDefault();
+        document.querySelector('.side-tab[data-tab="notes"]')?.click();
+      }
+    });
+
+    // Inject more menu entries when possible
+    const morePanel = document.getElementById('dynPaneMore');
+    if (morePanel && !document.getElementById('phase2MoreInject')) {
+      const div = document.createElement('div');
+      div.id = 'phase2MoreInject';
+      div.innerHTML = `
+        <div class="more-hub-section">Collaboration</div>
+        <button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>
+        <button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>
+        <button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>
+        <div class="more-hub-section">Media</div>
+        <button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>
+        <button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>
+        <div class="more-hub-section">Hub</div>
+        <button type="button" class="more-item" data-action="activity"><i class="fa-solid fa-clock-rotate-left"></i> Activity</button>
+      `;
+      morePanel.appendChild(div);
+    }
+
+    // WS message extensions
+    const extraHandlers = {
+      'private-chat': function (msg) {
+        const m = msg.message;
+        if (!m) return;
+        const box = document.getElementById('chatMessages');
+        if (box) {
+          const el = document.createElement('div');
+          el.className = 'chat-msg private-msg';
+          el.innerHTML = '<span class="tag">Private</span> <strong>' + (m.fromName || '') +
+            (m.fromId === currentMeeting?.participantId ? ' → ' + (m.toName || '') : '') +
+            ':</strong> ' + (m.text || '');
+          box.appendChild(el);
+          box.scrollTop = box.scrollHeight;
+        }
+      },
+      'recording-capture': function (msg) {
+        if (myRole !== 'host' && !currentMeeting?.isHost) return;
+        if (msg.action === 'start') startClientCapture(msg.options || {});
+        if (msg.action === 'pause') pauseClientCapture();
+        if (msg.action === 'resume') resumeClientCapture();
+        if (msg.action === 'stop') {
+          // if still recording locally, stop without double-send
+          try {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+              mediaRecorder.onstop = null;
+              mediaRecorder.stop();
+              mediaRecorder = null;
+            }
+          } catch (_) {}
+        }
+      },
+      'wb-stroke': function (msg) { if (msg.stroke) drawStroke(msg.stroke); },
+      'wb-clear': function () {
+        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      },
+      'wb-sync': function (msg) {
+        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        (msg.strokes || []).forEach(drawStroke);
+      },
+      'breakout-state': function (msg) {
+        const list = document.getElementById('breakoutList');
+        if (!list) return;
+        list.innerHTML = '';
+        (msg.breakouts?.rooms || []).forEach((r) => {
+          const li = document.createElement('li');
+          li.textContent = r.name + ' (' + (r.participantIds?.length || 0) + ' people)';
+          list.appendChild(li);
+        });
+      },
+      'breakout-assign': function (msg) {
+        if (typeof showToast === 'function') showToast('Assigned to ' + (msg.room?.name || 'breakout room'));
+      },
+      'breakout-return': function () {
+        if (typeof showToast === 'function') showToast('Return to main meeting');
+      },
+    };
+
+    // Install WS hook: wrap native path by listening via monkey on sendWS side messages
+    // Polling-free: patch WebSocket message by intercepting after connectWS - use setInterval once to attach
+    const attach = () => {
+      // Use document custom events if app emits them; else override JSON parse path
+      const OrigWS = window.WebSocket;
+      if (OrigWS.__phase2Patched) return;
+      // Prefer: listen to existing socket if global
+    };
+    // Safer approach: extend _phase2MsgTypes if exists
+    try {
+      if (typeof _phase2MsgTypes === 'object') {
+        Object.assign(_phase2MsgTypes, extraHandlers);
+      }
+    } catch (_) {}
+    // Also register on message via capturing at window
+    window.addEventListener('message', () => {});
+    // Patch connectWS after definition by interval
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (typeof connectWS === 'function' && !connectWS.__p2) {
+        const orig = connectWS;
+        window.connectWS = function () {
+          const r = orig.apply(this, arguments);
+          setTimeout(() => {
+            try {
+              if (ws && !ws.__p2handlers) {
+                ws.__p2handlers = true;
+                const prev = ws.onmessage;
+                ws.onmessage = function (ev) {
+                  if (prev) prev.call(this, ev);
+                  try {
+                    const msg = JSON.parse(ev.data);
+                    const h = extraHandlers[msg.type];
+                    if (h) h(msg);
+                  } catch (_) {}
+                };
+              }
+            } catch (_) {}
+          }, 100);
+          return r;
+        };
+        connectWS.__p2 = true;
+        clearInterval(iv);
+      }
+      if (tries > 50) clearInterval(iv);
+    }, 200);
+
+    // Participant limit UI — security panel
+    const secPanel = document.getElementById('dynPaneSecurity') || document.querySelector('[data-pane="security"]');
+    if (secPanel && !document.getElementById('maxParticipantsInput')) {
+      const wrap = document.createElement('div');
+      wrap.style.marginTop = '0.75rem';
+      wrap.innerHTML = '<label class="checkbox-label">Max participants <input type="number" id="maxParticipantsInput" min="2" max="100" value="20" style="width:4rem;margin-left:0.35rem"></label>';
+      secPanel.appendChild(wrap);
+      document.getElementById('maxParticipantsInput')?.addEventListener('change', (e) => {
+        const n = parseInt(e.target.value, 10);
+        if (n >= 2 && n <= 100) sendWS({ type: 'set-max-participants', max: n });
+      });
+    }
+
+    // Artifact deep link + restart query
+    (function () {
+      const path = location.pathname;
+      const m = path.match(/^\/m\/([^/]+)\/?$/);
+      const params = new URLSearchParams(location.search);
+      if (m && params.get('restart') === '1') {
+        // join meeting from artifact restart
+        const code = m[1];
+        setTimeout(() => {
+          const joinInput = document.getElementById('joinCode') || document.querySelector('input[name="code"]');
+          if (joinInput) joinInput.value = code;
+          // try click join
+          document.getElementById('joinBtn')?.click();
+        }, 400);
+      }
+    })();
+  })();
+

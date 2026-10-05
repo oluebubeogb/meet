@@ -380,5 +380,17 @@ module.exports = {
       });
       emitRoster(meetingCode, meeting);
     });
+
+    ctx.onWs('set-max-participants', ({ msg, participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || actor.role !== 'host') return;
+      const max = Math.min(100, Math.max(2, parseInt(msg.max || 20, 10)));
+      if (!meeting.settings) meeting.settings = {};
+      meeting.settings.maxParticipants = max;
+      meeting.maxParticipants = max;
+      broadcast(meetingCode, { type: 'toast', message: 'Participant limit set to ' + max });
+      broadcast(meetingCode, { type: 'security-state', security: { maxParticipants: max } });
+    });
+
   },
 };

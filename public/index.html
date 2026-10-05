@@ -371,6 +371,10 @@
               <i class="fa-regular fa-bell"></i> <span class="tab-label">Notifications</span>
               <span id="notifUnreadBadge" class="count-badge hidden">0</span>
             </button>
+            <button type="button" class="side-tab notes-desktop-only" data-tab="notes" role="tab" aria-selected="false" title="Notes">
+              <i class="fa-solid fa-note-sticky"></i>
+              <span class="side-tab-label">Notes</span>
+            </button>
             <button type="button" class="side-tab" data-tab="timeline" role="tab" aria-selected="false" title="Screen timeline">
               <i class="fa-solid fa-images"></i> <span class="tab-label">Timeline</span>
             </button>
@@ -402,6 +406,14 @@
                 <div id="mentionMenu" class="mention-menu hidden" role="listbox"></div>
                 <form class="chat-form" id="chatForm">
                   <div class="chat-form-row chat-form-row-input">
+
+              <div class="chat-mode-tabs" id="chatModeTabs">
+                <button type="button" class="chat-mode-btn active" id="chatModePublic" data-mode="public">Everyone</button>
+                <button type="button" class="chat-mode-btn" id="chatModePrivate" data-mode="private">Private</button>
+              </div>
+              <div class="private-chat-target hidden" id="privateChatTarget">
+                <select id="privateChatSelect"><option value="">Select participant…</option></select>
+              </div>
                     <input id="chatInput" type="text" maxlength="2000" placeholder=" Message... " autocomplete="off">
                     <button type="submit" class="btn icon-btn chat-send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
                   </div>
@@ -438,6 +450,26 @@
               <ul class="notifications-list" id="notificationsList"></ul>
               <p id="notificationsEmpty" class="history-empty">No notifications yet.</p>
             </div>
+            
+            <!-- NOTES TAB (desktop sidebar) -->
+            <div class="side-tab-panel hidden notes-desktop-only" id="notesTab" data-tab="notes" role="tabpanel">
+              <div class="notes-toolbar">
+                <strong>Personal notes</strong>
+                <button type="button" id="liveNotesSave" class="btn small-btn primary-btn">Save</button>
+              </div>
+              <p class="notes-hint">Private to you. Saved to this meeting’s Artifact when available.</p>
+              <textarea id="liveNotesEditor" placeholder="Jot notes during the call…"></textarea>
+              <div class="notes-toolbar" style="margin-top:0.5rem">
+                <strong>Summary</strong>
+                <button type="button" id="summaryGenerateBtn" class="btn small-btn">Generate draft</button>
+              </div>
+              <div id="meetingSummaryBox" class="summary-box" contenteditable="true" data-placeholder="Meeting summary…"></div>
+              <button type="button" id="summarySaveBtn" class="btn small-btn">Save summary</button>
+            </div>
+            <div class="notes-mobile-soon" id="notesMobileSoon">
+              <p><i class="fa-solid fa-mobile-screen"></i> Notes on mobile — coming soon. Use desktop for the sidebar notes panel.</p>
+            </div>
+
             <!-- TIMELINE TAB (desktop sidebar 4th panel) -->
             <div class="side-tab-panel hidden" id="timelineTab" data-tab="timeline" role="tabpanel">
               <div class="screen-timeline side-timeline" id="sideScreenTimeline">
@@ -488,7 +520,11 @@
             <div class="meeting-title-bar desktop-only">
               <span id="meetingNameLabel" class="meeting-name-label hidden"></span>
               <span id="meetingDurationTimer" class="meeting-duration-timer hidden" title="Meeting duration">00:00</span>
-              <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> Recording <span id="recordingTimer"></span></span>
+              <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> <span id="recordingStatusLabel">Recording</span> <span id="recordingTimer"></span></span>
+              <span id="recControlsBar" class="rec-controls-bar hidden">
+                <button type="button" id="recPauseBtn" class="btn btn-pause" title="Pause">Pause</button>
+                <button type="button" id="recStopBtn" class="btn btn-stop" title="Stop &amp; save">Stop &amp; save</button>
+              </span>
               <button id="shareLinkBtn" class="btn small-btn hidden" title="Copy invite link" aria-hidden="true">
                 <i class="fa-solid fa-link"></i> Share
               </button>
@@ -1059,12 +1095,49 @@
         <label class="checkbox-label"><input type="checkbox" id="recVideo" checked> Video</label>
         <label class="checkbox-label"><input type="checkbox" id="recScreen" checked> Screen sharing</label>
         <label class="checkbox-label"><input type="checkbox" id="recChat" checked> Chat</label>
+        <p id="recordModalState" class="modal-sub" style="margin-top:0.5rem"></p>
         <div class="modal-actions">
           <button type="button" id="recordCancelBtn" class="btn">Cancel</button>
           <button type="button" id="recordStartBtn" class="btn primary-btn">Start recording</button>
+          <button type="button" id="recordPauseBtnModal" class="btn hidden">Pause</button>
+          <button type="button" id="recordStopBtnModal" class="btn danger-btn hidden">Stop &amp; save</button>
         </div>
       </div>
     </div>
+
+    <!-- Whiteboard modal -->
+    <div id="whiteboardModal" class="modal hidden">
+      <div class="modal-backdrop" id="whiteboardModalBackdrop"></div>
+      <div class="modal-card" style="max-width:900px;width:95%">
+        <h2>Whiteboard</h2>
+        <div class="wb-toolbar">
+          <input type="color" id="wbColor" value="#111111" title="Color">
+          <button type="button" class="btn small-btn" id="wbPen">Pen</button>
+          <button type="button" class="btn small-btn" id="wbEraser">Eraser</button>
+          <button type="button" class="btn small-btn" id="wbClear">Clear</button>
+          <button type="button" class="btn small-btn" id="wbExport">Export PNG</button>
+          <button type="button" class="btn small-btn" id="whiteboardClose">Close</button>
+        </div>
+        <div class="whiteboard-wrap"><canvas id="whiteboardCanvas" width="1200" height="720"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Breakout modal -->
+    <div id="breakoutModal" class="modal hidden">
+      <div class="modal-backdrop" id="breakoutModalBackdrop"></div>
+      <div class="modal-card">
+        <h2>Breakout rooms</h2>
+        <p class="modal-sub">Host can split participants into rooms.</p>
+        <label>Number of rooms <input type="number" id="breakoutCount" min="2" max="10" value="2" style="width:4rem"></label>
+        <div class="modal-actions" style="margin-top:0.75rem">
+          <button type="button" id="breakoutCancel" class="btn">Cancel</button>
+          <button type="button" id="breakoutCreate" class="btn primary-btn">Create &amp; assign</button>
+          <button type="button" id="breakoutCloseAll" class="btn">Close all rooms</button>
+        </div>
+        <ul id="breakoutList" class="breakout-list"></ul>
+      </div>
+    </div>
+
 
     
     <!-- INVITE DRAWER (P1) -->

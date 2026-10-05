@@ -3747,8 +3747,16 @@ body.dark #meetingView {
   flex-wrap: nowrap;
   /* name / share / end moved to topbar — only recording badge remains */
 }
-#meetingView .meeting-title-bar:not(:has(.recording-badge:not(.hidden))) {
-  display: none;
+/* Phase 1 fix: always show title bar in-call so duration timer is visible without recording */
+#meetingView .meeting-title-bar {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 34px;
+  padding: 0.25rem 0;
+}
+#meetingView .meeting-duration-timer:not(.hidden) {
+  display: inline-flex !important;
 }
 #meetingView .meeting-name-label,
 #meetingView #shareLinkBtn,
@@ -5642,4 +5650,157 @@ html.dark .meeting-duration-timer {
 }
 .history-artifact-btn {
   margin-left: 0.5rem;
+}
+
+/* ===== Phase 2: Notes sidebar (desktop) ===== */
+.side-tab-panel#notesTab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0.75rem;
+  gap: 0.5rem;
+}
+#liveNotesEditor {
+  flex: 1;
+  min-height: 180px;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.12);
+  padding: 0.75rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.92rem;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+html.dark #liveNotesEditor {
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.2);
+}
+.notes-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.notes-hint {
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+.notes-mobile-soon {
+  display: none;
+  padding: 1rem;
+  text-align: center;
+  opacity: 0.8;
+}
+@media (max-width: 768px) {
+  .notes-desktop-only { display: none !important; }
+  .notes-mobile-soon { display: block; }
+}
+
+/* Recording controls bar */
+.rec-controls-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.35rem;
+}
+.rec-controls-bar.hidden { display: none !important; }
+.rec-controls-bar .btn {
+  height: 28px;
+  padding: 0 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+}
+.rec-controls-bar .btn-pause { background: #fef3c7; border: 1px solid #f59e0b; }
+.rec-controls-bar .btn-stop { background: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; }
+
+/* Private chat */
+.chat-mode-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+.chat-mode-tabs .chat-mode-btn {
+  flex: 1;
+  font-size: 0.78rem;
+  padding: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.1);
+  background: transparent;
+  cursor: pointer;
+}
+.chat-mode-tabs .chat-mode-btn.active {
+  background: var(--primary, #4f46e5);
+  color: #fff;
+  border-color: transparent;
+}
+.private-chat-target {
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+.private-chat-target select {
+  width: 100%;
+  border-radius: 8px;
+  padding: 0.35rem;
+}
+
+/* PiP / background buttons */
+.media-extra-controls {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.25rem;
+}
+
+/* Whiteboard */
+.whiteboard-wrap {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+#whiteboardCanvas {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.wb-toolbar {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.wb-toolbar input[type=color] { width: 36px; height: 28px; border: none; padding: 0; }
+
+/* Breakout */
+.breakout-list { list-style: none; padding: 0; margin: 0.5rem 0; }
+.breakout-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.04);
+  margin-bottom: 0.35rem;
+}
+
+/* More hub sections */
+.more-hub-section {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+.summary-box {
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.1);
+  padding: 0.75rem;
+  min-height: 80px;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
 }

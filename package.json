@@ -1,14 +1,22 @@
 {
   "name": "meet",
-  "version": "1.6.0",
-  "description": "Meet - Collaborative screen sharing and audio calls powered by LiveKit (Phase 1: PostgreSQL + Artifacts)",
+  "version": "1.7.0",
+  "description": "Meet Phase 1+2A/2B \u2014 Postgres, Artifacts, private chat, notes, whiteboard, breakouts",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
     "migrate:sqlite-to-pg": "node scripts/migrate-sqlite-to-pg.js"
   },
-  "keywords": ["meet", "meeting", "screenshare", "livekit", "webrtc", "audio", "postgresql"],
+  "keywords": [
+    "meet",
+    "meeting",
+    "screenshare",
+    "livekit",
+    "webrtc",
+    "audio",
+    "postgresql"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {

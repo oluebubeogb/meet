@@ -470,7 +470,7 @@ function createRequestHandler() {
     await db.setArtifactLive(artifact.id, true);
     return sendJSON(res, 200, {
       ok: true,
-      joinUrl: `/?join=${encodeURIComponent(code)}`,
+      joinUrl: `/m/${encodeURIComponent(code)}?restart=1&artifact=${encodeURIComponent(slug)}`,
       code,
       artifactSlug: slug,
     });
