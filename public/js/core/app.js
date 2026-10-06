@@ -1762,6 +1762,16 @@
       shareBtn.innerHTML = '<i class="fa-solid fa-desktop"></i><span>Share</span>';
       shareBtn.title = 'Share screen';
     }
+    try {
+      var sideLbl = document.getElementById('sideShareScreenLabel');
+      if (sideLbl) sideLbl.textContent = isSharing ? 'Stop sharing' : 'Share screen';
+      var mediaShare = document.getElementById('mediaShareBtn');
+      if (mediaShare) {
+        mediaShare.innerHTML = isSharing
+          ? '<i class="fa-solid fa-display"></i> Stop sharing'
+          : '<i class="fa-solid fa-display"></i> Screen share';
+      }
+    } catch (_) {}
   }
 
   function updateMicButton() {
@@ -2240,6 +2250,7 @@
 
     if (!sharingList.length && !hasTimeline) {
       screenCards.classList.add('empty');
+      try { mirrorScreenCardsToSide(); } catch (_) {}
       return;
     }
     screenCards.classList.remove('empty');
@@ -2316,6 +2327,35 @@
       wrap.appendChild(toggle);
       wrap.appendChild(extra);
       screenCards.appendChild(wrap);
+    }
+    try { mirrorScreenCardsToSide(); } catch (_) {}
+  }
+
+  function mirrorScreenCardsToSide() {
+    var side = document.getElementById('sideScreenCards');
+    if (!side) return;
+    side.innerHTML = '';
+    var src = document.getElementById('screenCards');
+    var cards = src ? src.querySelectorAll('.screen-card') : [];
+    if (!cards.length) {
+      side.innerHTML = '<p class="st-empty quiet-label" id="sideScreenCardsEmpty">No active screen shares</p>';
+      var badge = document.getElementById('railScreensBadge');
+      if (badge) { badge.textContent = ''; badge.classList.add('hidden'); }
+      return;
+    }
+    var n = 0;
+    cards.forEach(function (c) {
+      n += 1;
+      var clone = c.cloneNode(true);
+      clone.addEventListener('click', function () {
+        try { c.click(); } catch (_) {}
+      });
+      side.appendChild(clone);
+    });
+    var badge = document.getElementById('railScreensBadge');
+    if (badge) {
+      badge.textContent = n ? String(n) : '';
+      badge.classList.toggle('hidden', !n);
     }
   }
 
@@ -8591,6 +8631,56 @@
         bindClick('mediaMicToggle', function () { if (typeof toggleMic === 'function') toggleMic(); });
         bindClick('mediaShareBtn', function () { var s = document.getElementById('shareBtn'); if (s) s.click(); });
         bindClick('mediaRecordBtn', function () { var m = document.getElementById('recordModal'); if (m) m.classList.remove('hidden'); });
+        // Collaboration / media tools (moved from More)
+        document.querySelectorAll('#mediaTab .more-item[data-action]').forEach(function (btn) {
+          btn.onclick = function (e) {
+            e.preventDefault();
+            var act = btn.getAttribute('data-action');
+            if (act === 'pip' && window.__meetRequestPiP) window.__meetRequestPiP();
+            else if (act === 'blur' && window.__meetToggleBlur) window.__meetToggleBlur();
+            else if (act === 'whiteboard' && window.__meetOpenWhiteboard) window.__meetOpenWhiteboard();
+            else if (act === 'breakout' && window.__meetOpenBreakout) window.__meetOpenBreakout();
+            else if (act === 'notes') {
+              try {
+                if (typeof togglePanel === 'function') togglePanel('notes');
+                else document.querySelector('.rail-btn[data-panel="notes"]')?.click();
+              } catch (_) {}
+            }
+          };
+        });
+        // Wire media timeline controls to existing timeline handlers if present
+        try {
+          var ss = document.getElementById('stSlideshowToggleMedia');
+          var ssMain = document.getElementById('stSlideshowToggle') || document.getElementById('stSlideshowToggleSide') || document.getElementById('stSlideshowToggleDesktop');
+          if (ss && ssMain && !ss.__bound) {
+            ss.__bound = true;
+            ss.checked = !!ssMain.checked;
+            ss.addEventListener('change', function () { ssMain.checked = ss.checked; ssMain.dispatchEvent(new Event('change')); });
+          }
+          var addM = document.getElementById('stAddImagesBtnMedia');
+          var addMain = document.getElementById('stAddImagesBtn') || document.getElementById('stAddImagesBtnSide') || document.getElementById('stAddImagesBtnDesktop');
+          if (addM && addMain && !addM.__bound) {
+            addM.__bound = true;
+            addM.addEventListener('click', function () { addMain.click(); });
+          }
+          // Show host actions if visible elsewhere
+          var actM = document.getElementById('stActionsMedia');
+          var actMain = document.getElementById('stActionsSide') || document.getElementById('stActionsDesktop') || document.getElementById('stActions');
+          if (actM && actMain) actM.classList.toggle('hidden', actMain.classList.contains('hidden'));
+        } catch (_) {}
+      }
+      if (name === 'screenshare') {
+        bindClick('sideShareScreenBtn', function () {
+          var s = document.getElementById('shareBtn');
+          if (s) s.click();
+        });
+        try { if (typeof renderCards === 'function') renderCards(); } catch (_) {}
+        try { mirrorScreenCardsToSide(); } catch (_) {}
+        // Keep share label in sync
+        try {
+          var lbl = document.getElementById('sideShareScreenLabel');
+          if (lbl) lbl.textContent = (typeof isSharing !== 'undefined' && isSharing) ? 'Stop sharing' : 'Share screen';
+        } catch (_) {}
       }
       if (name === 'room') {
         try { refreshRoomRaised(); } catch (_) {}

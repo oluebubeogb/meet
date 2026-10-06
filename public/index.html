@@ -364,6 +364,7 @@
         <button type="button" class="rail-btn rail-panel" data-panel="media" title="Media"><i class="fa-solid fa-sliders"></i></button>
         <button type="button" class="rail-btn rail-panel" data-panel="room" title="Room"><i class="fa-solid fa-door-open"></i></button>
         <button type="button" class="rail-btn rail-panel notes-desktop-only" data-panel="notes" title="Notes"><i class="fa-solid fa-note-sticky"></i></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="screenshare" title="Screen share"><i class="fa-solid fa-display"></i><span class="rail-badge hidden" id="railScreensBadge"></span></button>
         <button type="button" class="rail-btn rail-panel rail-bottom-ish" data-panel="account" title="Account"><i class="fa-regular fa-user"></i></button>
       </aside>
       <!-- COL2: expandable panel -->
@@ -518,31 +519,67 @@
 
             <!-- MEDIA TAB -->
             <div class="side-tab-panel hidden" id="mediaTab" data-tab="media" role="tabpanel">
-              <div class="panel-block">
-                <button type="button" id="mediaMicToggle" class="btn full-width media-row"><i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span></button>
-                <div class="media-devices">
-                  <label class="quiet-label">Input</label>
-                  <select id="micDeviceSelect" class="full-width"></select>
+              <div class="panel-block media-panel-block">
+                <div class="more-hub-section">Input</div>
+                <div class="media-devices media-field">
+                  <select id="micDeviceSelect" class="full-width" aria-label="Microphone source"></select>
                 </div>
-                <button type="button" id="mediaShareBtn" class="btn full-width media-row"><i class="fa-solid fa-display"></i> Screen</button>
-                <button type="button" id="mediaRecordBtn" class="btn full-width media-row"><i class="fa-solid fa-circle" style="color:#e5484d"></i> Record</button>
+                <button type="button" id="mediaMicToggle" class="more-item media-row-item"><i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span></button>
+                <button type="button" id="mediaShareBtn" class="more-item media-row-item"><i class="fa-solid fa-display"></i> Screen share</button>
+                <button type="button" id="mediaRecordBtn" class="more-item media-row-item"><i class="fa-solid fa-circle" style="color:#e5484d"></i> Record</button>
+
+                <div class="more-hub-section">Collaboration</div>
+                <button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>
+                <button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>
+                <button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>
+
+                <div class="more-hub-section">Media tools</div>
+                <button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>
+                <button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>
+
+                <div class="more-hub-section">Screen timeline</div>
+                <div class="screen-timeline side-timeline media-timeline" id="mediaScreenTimeline">
+                  <div class="st-header st-header-slim">
+                    <label class="st-slideshow-toggle" title="Slideshow">
+                      <input type="checkbox" id="stSlideshowToggleMedia">
+                      <span>Slideshow</span>
+                    </label>
+                  </div>
+                  <div class="st-slots" id="stSlotsMedia">
+                    <p class="st-empty"></p>
+                  </div>
+                  <div class="media-timeline-divider" aria-hidden="true"></div>
+                  <div class="st-actions host-cohost-only hidden" id="stActionsMedia">
+                    <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnMedia"><i class="fa-solid fa-plus"></i> Add images</button>
+                    <input type="file" id="stImageInputMedia" accept="image/*" multiple hidden>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SCREEN SHARE TAB -->
+            <div class="side-tab-panel hidden" id="screenshareTab" data-tab="screenshare" role="tabpanel">
+              <div class="panel-block media-panel-block">
+                <button type="button" id="sideShareScreenBtn" class="more-item media-row-item"><i class="fa-solid fa-display"></i> <span id="sideShareScreenLabel">Share screen</span></button>
+                <div class="more-hub-section">Active shares</div>
+                <div class="side-screen-cards" id="sideScreenCards">
+                  <p class="st-empty quiet-label" id="sideScreenCardsEmpty">No active screen shares</p>
+                </div>
               </div>
             </div>
 
             <!-- ROOM TAB -->
             <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
-              <div class="panel-block">
-                <button type="button" class="btn full-width media-row rail-open-panel" data-goto="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
-                <button type="button" class="btn full-width media-row" id="roomCopyLinkBtn"><i class="fa-solid fa-link"></i> Copy link</button>
+              <div class="panel-block media-panel-block">
+                <button type="button" class="more-item media-row-item rail-open-panel" data-goto="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
+                <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn"><i class="fa-solid fa-link"></i> Copy link</button>
                 <div id="roomLinkBox" class="room-link-box hidden"><input id="roomLinkInput" readonly><button type="button" id="roomLinkCopy" class="btn small-btn">Copy</button></div>
-                <button type="button" class="btn full-width media-row" id="roomHandBtn"><i class="fa-solid fa-hand"></i> Hand</button>
+                <button type="button" class="more-item media-row-item" id="roomHandBtn"><i class="fa-solid fa-hand"></i> Hand</button>
                 <div id="roomRaisedBlock" class="room-raised-block">
                   <div class="quiet-label">Raised</div>
                   <ul id="roomRaisedList" class="participant-list raised-list"></ul>
                 </div>
-                <button type="button" class="btn full-width media-row rail-open-panel" data-goto="timeline"><i class="fa-solid fa-images"></i> Timeline</button>
-                <button type="button" class="btn full-width media-row rail-open-panel" data-goto="more"><i class="fa-solid fa-ellipsis"></i> More</button>
-                <button type="button" class="btn full-width media-row" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
+                <button type="button" class="more-item media-row-item" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
               </div>
             </div>
 
@@ -607,7 +644,7 @@
                 <i class="fa-solid fa-phone-slash"></i> End
               </button>
             </div>
-            <div class="screen-cards desktop-only" id="screenCards"></div>
+            <div class="screen-cards desktop-only hidden-screen-cards" id="screenCards" aria-hidden="true"></div>
             <div class="desktop-screen-timeline desktop-only" id="desktopScreenTimeline">
               <div class="st-header">
                 <label class="st-slideshow-toggle" title="Slideshow on/off">
@@ -694,12 +731,7 @@
               <div id="bigPlaceholder" class="placeholder stage-idle-bg" aria-hidden="true"></div>
               <div class="big-view-label" id="bigViewLabel"></div>
               <div id="reactionOverlay" class="reaction-overlay" aria-hidden="true"></div>
-              <button id="screenFsBtn" class="btn icon-btn screen-fs-btn" title="Fullscreen shared screen">
-                <i class="fa-solid fa-expand"></i>
-              </button>
-              <button id="chatOverlayBtn" class="btn icon-btn chat-overlay-btn" title="Toggle chat on screen (C)" aria-pressed="false">
-                <i class="fa-regular fa-comments"></i>
-              </button>
+              <!-- screenFsBtn and chatOverlayBtn removed from stage -->
               <div id="chatPipStack" class="chat-pip-stack" aria-live="polite"></div>
               <div id="chatScreenOverlay" class="chat-screen-overlay hidden">
                 <div class="chat-screen-overlay-header">
