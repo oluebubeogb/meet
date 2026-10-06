@@ -1,3 +1,46 @@
+# Meet (Phase 1)
+
+Collaborative meeting rooms with **screen share** and **audio**, powered by LiveKit.
+
+**Phase 1 (v1.6.0):**
+- PostgreSQL when `DATABASE_URL` is set (SQLite fallback otherwise)
+- Artifacts: permanent `/m/{code}/{slug}` archives after meetings end
+- State reset between meetings, recording UX improvements, UI quick wins
+
+## Environment
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Phase 1 prod | `postgresql://user:pass@host:5432/meet` |
+| `DATA_DIR` | no | SQLite path / file storage (default `./data`) |
+| `JWT_SECRET` | **yes in prod** | Session secret |
+| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | **yes** | LiveKit |
+
+## Local
+
+```bash
+npm install
+cp .env.example .env
+# optional: set DATABASE_URL for Postgres 18
+node server.js
+```
+
+## Coolify
+
+1. Postgres 18 service → create DB `meet`
+2. Meet Dockerfile resource
+3. Env: `DATABASE_URL`, `JWT_SECRET`, LiveKit keys
+4. Volume `/app/data` (files / SQLite fallback)
+5. Domain + SSL, health `/health`
+
+Migrate existing SQLite:
+
+```bash
+DATABASE_URL=... DATA_DIR=/app/data npm run migrate:sqlite-to-pg
+```
+
+See `../PHASE1_SPEC.md` and `../DEPLOY_GUIDE.md`.
+
 # Meet
 
 Collaborative meeting rooms with **screen share** and **audio calls**, powered by [LiveKit](https://livekit.io).

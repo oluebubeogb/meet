@@ -12,6 +12,12 @@ const { isLiveKitConfigured } = require('./livekit/tokens');
 const { features } = require('./lib/features');
 
 function start() {
+  // Phase 1: init DB (Postgres or SQLite) before accepting traffic
+  db.ensureReady().catch((e) => {
+    console.error('[FATAL] DB init failed:', e);
+    process.exit(1);
+  });
+
   const handleRequest = createRequestHandler();
   const server = http.createServer((req, res) => {
     Promise.resolve(handleRequest(req, res)).catch((err) => {
@@ -28,7 +34,7 @@ function start() {
 
   server.listen(config.PORT, '0.0.0.0', () => {
     console.log(`Meet is running at http://0.0.0.0:${config.PORT}`);
-    console.log(`[DB] SQLite at ${db.DB_PATH}`);
+    console.log(db.USE_PG ? "[DB] PostgreSQL (DATABASE_URL)" : `[DB] SQLite at ${db.DB_PATH}`);
     console.log('[features]', JSON.stringify(features));
     if (!isLiveKitConfigured()) {
       console.warn(

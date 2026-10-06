@@ -8,6 +8,10 @@ const moderation = require('./moderation');
 const activity = require('./activity');
 const recording = require('./recording');
 const screenTimeline = require('./screenTimeline');
+const privateChat = require('./privateChat');
+const groupChat = require('./groupChat');
+const breakout = require('./breakout');
+const whiteboard = require('./whiteboard');
 
 function registerBuiltinPlugins() {
   registerPlugin(chat);
@@ -19,6 +23,10 @@ function registerBuiltinPlugins() {
   registerPlugin(activity);
   registerPlugin(recording);
   registerPlugin(screenTimeline);
+  registerPlugin(privateChat);
+  registerPlugin(groupChat);
+  registerPlugin(breakout);
+  registerPlugin(whiteboard);
 }
 
 module.exports = {

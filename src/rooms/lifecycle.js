@@ -9,17 +9,23 @@ const {
   touchMeeting,
 } = require('./store');
 
-function endMeeting(code, reason = 'ended') {
+async function endMeeting(code, reason = 'ended') {
   const meeting = getMeeting(code);
   if (!meeting) return;
   if (meeting.historyId) {
     try {
-      db.endMeetingHistory(meeting.historyId);
+      await db.endMeetingHistory(meeting.historyId);
     } catch (_) {}
+    try {
+      // Phase 1: permanent Artifact for ended meetings
+      await db.ensureArtifactForHistory(meeting.historyId, code);
+    } catch (e) {
+      console.warn('[artifact] create on end', e.message);
+    }
   }
   if (meeting.scheduledId) {
     try {
-      db.updateScheduledStatus(meeting.scheduledId, 'ended', {
+      await db.updateScheduledStatus(meeting.scheduledId, 'ended', {
         endedAt: new Date().toISOString(),
       });
     } catch (_) {}
@@ -43,7 +49,7 @@ function cleanupInactiveMeetings() {
   for (const [code, meeting] of allMeetings()) {
     const last = meeting.lastActivity || meeting.createdAt || 0;
     if (now - last >= config.MEETING_INACTIVITY_MS) {
-      endMeeting(code, 'inactivity');
+      Promise.resolve(endMeeting(code, 'inactivity')).catch(() => {});
     }
   }
 }

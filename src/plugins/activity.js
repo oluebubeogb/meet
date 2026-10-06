@@ -6,10 +6,10 @@ module.exports = {
   register(ctx) {
     const { db, broadcast, getParticipantsList } = ctx;
 
-    function log(meeting, eventType, actor, detail) {
+    async function log(meeting, eventType, actor, detail) {
       if (!meeting) return;
       try {
-        db.logActivity({
+        await db.logActivity({
           meetingHistoryId: meeting.historyId || null,
           code: meeting.code || '',
           actorId: actor?.id || null,

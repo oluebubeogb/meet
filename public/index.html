@@ -6,9 +6,9 @@
   <title>Meet — Collab Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=Caveat:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=20261002mobileFirstK">
+  <link rel="stylesheet" href="styles.css?v=20261006drawerFix">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>">
 </head>
 <body>
@@ -270,6 +270,35 @@
     </section>
 
     <!-- HISTORY + SCHEDULED -->
+    
+    <section id="artifactView" class="artifact-view hidden">
+      <div class="artifact-card">
+        <div class="artifact-header">
+          <h2 id="artifactTitle">Meeting Artifact</h2>
+          <button id="artifactCloseBtn" class="btn small-btn">Back</button>
+        </div>
+        <p id="artifactMeta" class="history-meta"></p>
+        <div class="artifact-actions">
+          <button id="artifactRestartBtn" class="btn primary-btn hidden">Restart this meeting</button>
+        </div>
+        <div class="artifact-grid">
+          <div class="artifact-col">
+            <h3>Chat</h3>
+            <div id="artifactChat" class="artifact-chat"></div>
+          </div>
+          <div class="artifact-col">
+            <h3>Participants</h3>
+            <ul id="artifactParticipants" class="history-participants"></ul>
+            <h3>Recordings</h3>
+            <ul id="artifactRecordings" class="history-list"></ul>
+            <h3>Your notes</h3>
+            <textarea id="artifactNotes" rows="6" placeholder="Private notes (only you can see)"></textarea>
+            <button id="artifactSaveNotes" class="btn small-btn">Save notes</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="historyView" class="history-view hidden">
       <div class="history-card">
         <div class="history-header">
@@ -326,10 +355,23 @@
       </div>
     </section>
 
-    <main id="meetingView" class="layout hidden">
+    <main id="meetingView" class="layout hidden meet-rail-layout">
+      <!-- COL1: slim icon rail -->
+      <aside class="meet-icon-rail" id="meetIconRail" aria-label="Meeting tools">
+        <button type="button" class="rail-btn" id="railHomeLogo" title="Meet"><i class="fa-solid fa-handshake"></i></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="people" title="People"><i class="fa-solid fa-users"></i><span class="rail-badge" id="railPeopleBadge">1</span></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="chat" title="Chat"><i class="fa-regular fa-comments"></i><span class="rail-badge hidden" id="railChatBadge"></span></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="media" title="Media"><i class="fa-solid fa-sliders"></i></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="room" title="Room"><i class="fa-solid fa-door-open"></i></button>
+        <button type="button" class="rail-btn rail-panel notes-desktop-only" data-panel="notes" title="Notes"><i class="fa-solid fa-note-sticky"></i></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="screenshare" title="Screen share"><i class="fa-solid fa-display"></i><span class="rail-badge hidden" id="railScreensBadge"></span></button>
+        <button type="button" class="rail-btn rail-panel rail-bottom-ish" data-panel="account" title="Account"><i class="fa-regular fa-user"></i></button>
+      </aside>
+      <!-- COL2: expandable panel -->
+      <section class="meet-side-drawer hidden" id="meetSideDrawer">
       <section class="col col-1" id="col1">
         <div class="panel side-panel people-panel">
-          <nav class="side-tabs" role="tablist">
+          <nav class="side-tabs hidden-rail-tabs" role="tablist">
             <button type="button" class="side-tab active" data-tab="people" role="tab" aria-selected="true" title="People">
               <i class="fa-solid fa-users"></i> <span class="tab-label">People</span>
               <span id="participantCount" class="count-badge">1</span>
@@ -341,6 +383,10 @@
             <button type="button" class="side-tab" data-tab="notifications" role="tab" aria-selected="false" title="Notifications">
               <i class="fa-regular fa-bell"></i> <span class="tab-label">Notifications</span>
               <span id="notifUnreadBadge" class="count-badge hidden">0</span>
+            </button>
+            <button type="button" class="side-tab notes-desktop-only" data-tab="notes" role="tab" aria-selected="false" title="Notes">
+              <i class="fa-solid fa-note-sticky"></i>
+              <span class="side-tab-label">Notes</span>
             </button>
             <button type="button" class="side-tab" data-tab="timeline" role="tab" aria-selected="false" title="Screen timeline">
               <i class="fa-solid fa-images"></i> <span class="tab-label">Timeline</span>
@@ -354,12 +400,14 @@
                 <button id="deviceToggle" class="btn icon-btn device-toggle" title="Show device icons" aria-pressed="true">
                   <i class="fa-solid fa-mobile-screen"></i>
                 </button>
+                <button type="button" id="peopleNotifBtn" class="btn icon-btn" title="Notifications"><i class="fa-regular fa-bell"></i></button>
+                <button type="button" id="peopleMuteAllBtn" class="btn small-btn host-cohost-only hidden" title="Mute all">Mute all</button>
               </div>
               <div id="waitingBanner" class="waiting-banner hidden">
                 <span id="waitingBannerText">0 people want to join</span>
                 <button type="button" id="reviewWaitingBtn" class="btn small-btn">Review</button>
               </div>
-              <div class="people-section-label" id="inMeetingLabel">In meeting</div>
+              <div class="people-section-label hidden" id="inMeetingLabel"></div>
               <ul class="participant-list" id="participantList"></ul>
               <div class="people-section-label hidden" id="raisedHandsLabel">Raised hands</div>
               <ul class="participant-list raised-list" id="raisedHandsList"></ul>
@@ -368,40 +416,70 @@
             </div>
             <!-- CHAT TAB -->
             <div class="side-tab-panel hidden" id="chatTab" data-tab="chat" role="tabpanel">
-              <div class="side-chat" id="sideChat" data-drawer-chat="1">
-                <div class="chat-messages" id="chatMessages"></div>
-                <div id="mentionMenu" class="mention-menu hidden" role="listbox"></div>
-                <form class="chat-form" id="chatForm">
-                  <div class="chat-form-row chat-form-row-input">
-                    <input id="chatInput" type="text" maxlength="2000" placeholder=" Message... " autocomplete="off">
-                    <button type="submit" class="btn icon-btn chat-send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
-                  </div>
-                  <div class="chat-form-row chat-form-row-tools">
-                    <button type="button" id="chatImageBtn" class="btn icon-btn" title="Send image (WebP)">
-                      <i class="fa-regular fa-image"></i>
-                    </button>
-                    <button type="button" id="chatAttachBtn" class="btn icon-btn" title="Attach file">
-                      <i class="fa-solid fa-paperclip"></i>
-                    </button>
-                    <button type="button" id="chatVoiceBtn" class="btn icon-btn" title="Voice note">
-                      <i class="fa-solid fa-microphone"></i>
-                    </button>
-                    <span id="chatVoiceStatus" class="chat-voice-status hidden"></span>
-                  </div>
-                  <input type="file" id="chatImageInput" accept="image/*" class="hidden-file" hidden>
-                  <input type="file" id="chatFileInput" class="hidden-file" hidden>
-                </form>
+              <!-- Inbox list (default) -->
+              <div id="chatInbox" class="chat-inbox">
+                <ul id="chatInboxList" class="dm-list chat-inbox-list"></ul>
+                <button type="button" id="chatNewGroupBtn" class="btn small-btn full-width host-cohost-only hidden" style="margin:0.5rem">+ New group</button>
               </div>
-              <!-- Pre-send media preview (image / file / voice) -->
-              <div id="mediaPreviewBar" class="media-preview-bar hidden">
-                <div id="mediaPreviewContent" class="media-preview-content"></div>
-                <div class="media-preview-actions">
-                  <button type="button" id="mediaPreviewCancel" class="btn small-btn">Cancel</button>
-                  <button type="button" id="mediaPreviewSend" class="btn small-btn primary-btn">Send</button>
+              <!-- Thread view -->
+              <div id="chatThreadView" class="chat-thread-view hidden">
+                <div class="chat-thread-bar">
+                  <button type="button" id="chatThreadBack" class="btn icon-btn" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
+                  <span id="chatThreadTitle" class="chat-thread-title">Chat</span>
+                  <button type="button" id="chatThreadMembersBtn" class="btn icon-btn chat-members-btn hidden" title="Participants"><i class="fa-solid fa-users"></i></button>
+                </div>
+                <div id="chatMembersPanel" class="chat-members-panel hidden">
+                  <div class="chat-members-header">
+                    <span>Participants</span>
+                    <button type="button" id="chatMembersClose" class="btn icon-btn" title="Close"><i class="fa-solid fa-xmark"></i></button>
+                  </div>
+                  <ul id="chatMembersList" class="chat-members-list"></ul>
+                  <div id="chatMembersAddRow" class="chat-members-add host-cohost-only hidden">
+                    <select id="chatMembersAddSelect" class="full-width">
+                      <option value="">Add participant…</option>
+                    </select>
+                    <button type="button" id="chatMembersAddBtn" class="btn small-btn primary-btn">Add</button>
+                  </div>
+                </div>
+                <div class="side-chat" id="sideChat" data-drawer-chat="1">
+                  <div class="chat-messages" id="chatMessages"></div>
+                  <div id="mentionMenu" class="mention-menu hidden" role="listbox"></div>
+                  <form class="chat-form" id="chatForm">
+                    <div class="chat-form-row chat-form-row-input">
+                      <input id="chatInput" type="text" maxlength="2000" placeholder="Message…" autocomplete="off">
+                      <button type="submit" class="btn icon-btn chat-send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                    <div class="chat-form-row chat-form-row-tools">
+                      <button type="button" id="chatImageBtn" class="btn icon-btn" title="Image"><i class="fa-regular fa-image"></i></button>
+                      <button type="button" id="chatAttachBtn" class="btn icon-btn" title="File"><i class="fa-solid fa-paperclip"></i></button>
+                      <button type="button" id="chatVoiceBtn" class="btn icon-btn" title="Voice"><i class="fa-solid fa-microphone"></i></button>
+                      <span id="chatVoiceStatus" class="chat-voice-status hidden"></span>
+                    </div>
+                    <input type="file" id="chatImageInput" accept="image/*" class="hidden-file" hidden>
+                    <input type="file" id="chatFileInput" class="hidden-file" hidden>
+                  </form>
+                </div>
+                <div id="mediaPreviewBar" class="media-preview-bar hidden">
+                  <div id="mediaPreviewContent" class="media-preview-content"></div>
+                  <div class="media-preview-actions">
+                    <button type="button" id="mediaPreviewCancel" class="btn small-btn">Cancel</button>
+                    <button type="button" id="mediaPreviewSend" class="btn small-btn primary-btn">Send</button>
+                  </div>
+                </div>
+              </div>
+              <!-- New group modal-ish panel -->
+              <div id="chatNewGroupPanel" class="chat-new-group hidden">
+                <div class="chat-thread-bar">
+                  <button type="button" id="chatNewGroupBack" class="btn icon-btn"><i class="fa-solid fa-arrow-left"></i></button>
+                </div>
+                <div class="panel-block">
+                  <input id="newGroupName" type="text" placeholder="Group name" maxlength="40" class="full-width">
+                  <div class="quiet-label">Members</div>
+                  <ul id="newGroupMemberList" class="dm-list"></ul>
+                  <button type="button" id="newGroupCreateBtn" class="btn primary-btn full-width">Create</button>
                 </div>
               </div>
             </div>
-            <!-- NOTIFICATIONS TAB -->
             <div class="side-tab-panel hidden" id="notificationsTab" data-tab="notifications" role="tabpanel">
               <div class="tab-toolbar">
                 <input type="search" id="notifSearch" class="people-search" placeholder="Search notifications…" autocomplete="off">
@@ -409,25 +487,121 @@
               <ul class="notifications-list" id="notificationsList"></ul>
               <p id="notificationsEmpty" class="history-empty">No notifications yet.</p>
             </div>
-            <!-- TIMELINE TAB (desktop sidebar 4th panel) -->
+            
+            <!-- NOTES TAB (desktop sidebar) -->
+            <div class="side-tab-panel hidden notes-desktop-only" id="notesTab" data-tab="notes" role="tabpanel">
+              <textarea id="liveNotesEditor" placeholder="Notes…"></textarea>
+              <div id="meetingSummaryBox" class="summary-box hidden" contenteditable="true"></div>
+              <button type="button" id="liveNotesSave" class="hidden" tabindex="-1" aria-hidden="true"></button>
+              <button type="button" id="summaryGenerateBtn" class="hidden" tabindex="-1"></button>
+              <button type="button" id="summarySaveBtn" class="hidden" tabindex="-1"></button>
+            </div>
+
+            <!-- TIMELINE TAB (desktop sidebar) -->
             <div class="side-tab-panel hidden" id="timelineTab" data-tab="timeline" role="tabpanel">
               <div class="screen-timeline side-timeline" id="sideScreenTimeline">
-                <div class="st-header">
-                  <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
-                  <label class="st-slideshow-toggle" title="Slideshow on/off">
+                <div class="st-header st-header-slim">
+                  <label class="st-slideshow-toggle" title="Slideshow">
                     <input type="checkbox" id="stSlideshowToggleSide">
                     <span>Slideshow</span>
                   </label>
                 </div>
                 <div class="st-slots" id="stSlotsSide">
-                  <p class="st-empty">No timeline images yet.</p>
+                  <p class="st-empty"></p>
                 </div>
                 <div class="st-actions host-cohost-only hidden" id="stActionsSide">
                   <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnSide"><i class="fa-solid fa-plus"></i> Add images</button>
                   <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
                 </div>
-                <p class="st-empty st-hint">Hosts can allow participants/guests to add images from the people menu.</p>
+                <p class="st-empty st-hint"></p>
               </div>
+            </div>
+
+            <!-- MEDIA TAB -->
+            <div class="side-tab-panel hidden" id="mediaTab" data-tab="media" role="tabpanel">
+              <div class="panel-block media-panel-block">
+                <div class="more-hub-section">Input</div>
+                <div class="media-devices media-field">
+                  <select id="micDeviceSelect" class="full-width" aria-label="Microphone source"></select>
+                </div>
+                <button type="button" id="mediaMicToggle" class="more-item media-row-item"><i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span></button>
+                <button type="button" id="mediaShareBtn" class="more-item media-row-item"><i class="fa-solid fa-display"></i> Screen share</button>
+                <button type="button" id="mediaRecordBtn" class="more-item media-row-item"><i class="fa-solid fa-circle" style="color:#e5484d"></i> Record</button>
+
+                <div class="more-hub-section">Collaboration</div>
+                <button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>
+                <button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>
+                <button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>
+
+                <div class="more-hub-section">Media tools</div>
+                <button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>
+                <button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>
+
+                <div class="more-hub-section">Screen timeline</div>
+                <div class="screen-timeline side-timeline media-timeline" id="mediaScreenTimeline">
+                  <div class="st-header st-header-slim">
+                    <label class="st-slideshow-toggle" title="Slideshow">
+                      <input type="checkbox" id="stSlideshowToggleMedia">
+                      <span>Slideshow</span>
+                    </label>
+                  </div>
+                  <div class="st-slots" id="stSlotsMedia">
+                    <p class="st-empty"></p>
+                  </div>
+                  <div class="media-timeline-divider" aria-hidden="true"></div>
+                  <div class="st-actions host-cohost-only hidden" id="stActionsMedia">
+                    <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnMedia"><i class="fa-solid fa-plus"></i> Add images</button>
+                    <input type="file" id="stImageInputMedia" accept="image/*" multiple hidden>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SCREEN SHARE TAB -->
+            <div class="side-tab-panel hidden" id="screenshareTab" data-tab="screenshare" role="tabpanel">
+              <div class="panel-block media-panel-block">
+                <button type="button" id="sideShareScreenBtn" class="more-item media-row-item"><i class="fa-solid fa-display"></i> <span id="sideShareScreenLabel">Share screen</span></button>
+                <div class="more-hub-section">Active shares</div>
+                <div class="side-screen-cards" id="sideScreenCards">
+                  <p class="st-empty quiet-label" id="sideScreenCardsEmpty">No active screen shares</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- ROOM TAB -->
+            <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
+              <div class="panel-block media-panel-block">
+                <button type="button" class="more-item media-row-item rail-open-panel" data-goto="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
+                <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn"><i class="fa-solid fa-link"></i> Copy link</button>
+                <div id="roomLinkBox" class="room-link-box hidden"><input id="roomLinkInput" readonly><button type="button" id="roomLinkCopy" class="btn small-btn">Copy</button></div>
+                <button type="button" class="more-item media-row-item" id="roomHandBtn"><i class="fa-solid fa-hand"></i> Hand</button>
+                <div id="roomRaisedBlock" class="room-raised-block">
+                  <div class="quiet-label">Raised</div>
+                  <ul id="roomRaisedList" class="participant-list raised-list"></ul>
+                </div>
+                <button type="button" class="more-item media-row-item" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
+              </div>
+            </div>
+
+            <!-- ACCOUNT TAB -->
+            <div class="side-tab-panel hidden" id="accountTab" data-tab="account" role="tabpanel">
+              <div class="panel-block">
+                <button type="button" class="btn full-width media-row" id="accThemeBtn"><i class="fa-solid fa-moon"></i> Theme</button>
+                <button type="button" class="btn full-width media-row" id="accHistoryBtn"><i class="fa-solid fa-clock-rotate-left"></i> History</button>
+                <button type="button" class="btn full-width media-row" id="accAuthBtn"><i class="fa-regular fa-user"></i> Account</button>
+                <button type="button" class="btn full-width media-row" id="accLeaveBtn"><i class="fa-solid fa-phone-slash"></i> Leave</button>
+                <button type="button" class="btn full-width media-row danger-btn hidden" id="accEndBtn"><i class="fa-solid fa-xmark"></i> End for all</button>
+              </div>
+            </div>
+
+            <!-- SECURITY TAB -->
+            <div class="side-tab-panel hidden" id="securityTab" data-tab="security" role="tabpanel">
+              <div id="securityPanelMount" class="panel-block"></div>
+            </div>
+
+            <!-- MORE TAB -->
+            <div class="side-tab-panel hidden" id="moreTab" data-tab="more" role="tabpanel">
+              <div id="morePanelMount" class="panel-block"></div>
             </div>
           </div>
           <div id="chatPreviewOverlay" class="chat-preview-overlay hidden" aria-hidden="true">
@@ -443,7 +617,9 @@
         </div>
       </section>
 
-      <div class="resizer" id="resizer" title="Drag to resize"></div>
+      </section><!-- /col1 -->
+      </section><!-- /meet-side-drawer -->
+      <div class="resizer hidden" id="resizer" title="Drag to resize"></div>
 
       <section class="col col-2" id="col2">
         <div class="panel">
@@ -458,7 +634,9 @@
             </div>
             <div class="meeting-title-bar desktop-only">
               <span id="meetingNameLabel" class="meeting-name-label hidden"></span>
-              <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> Recording <span id="recordingTimer"></span></span>
+              
+              <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> <span id="recordingStatusLabel">Recording</span> <span id="recordingTimer"></span></span>
+              
               <button id="shareLinkBtn" class="btn small-btn hidden" title="Copy invite link" aria-hidden="true">
                 <i class="fa-solid fa-link"></i> Share
               </button>
@@ -466,17 +644,16 @@
                 <i class="fa-solid fa-phone-slash"></i> End
               </button>
             </div>
-            <div class="screen-cards desktop-only" id="screenCards"></div>
+            <div class="screen-cards desktop-only hidden-screen-cards" id="screenCards" aria-hidden="true"></div>
             <div class="desktop-screen-timeline desktop-only" id="desktopScreenTimeline">
               <div class="st-header">
-                <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
                 <label class="st-slideshow-toggle" title="Slideshow on/off">
                   <input type="checkbox" id="stSlideshowToggleDesktop">
                   <span>Slideshow</span>
                 </label>
               </div>
               <div class="st-slots" id="stSlotsDesktop">
-                <p class="st-empty" id="stEmptyDesktop">No timeline images. Hosts can add up to 10.</p>
+                <p class="st-empty" id="stEmptyDesktop"></p>
               </div>
               <div class="st-actions host-cohost-only hidden" id="stActionsDesktop">
                 <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnDesktop"><i class="fa-solid fa-plus"></i> Add images</button>
@@ -527,19 +704,34 @@
                   </button>
                 </div>
               </div>
-              <div id="bigPlaceholder" class="placeholder">
-                <i class="fa-solid fa-desktop big-icon"></i>
-                <p>No screen selected</p>
-                <p class="sub">Click a LIVE card to watch, or share your own</p>
+              <div class="stage-top-chrome" id="stageTopChrome">
+              <span id="meetingDurationTimer" class="meeting-duration-timer stage-timer" title="Duration">00:00</span>
+              <span id="recMiniControls" class="rec-mini-controls">
+                <button type="button" id="stageRecordBtn" class="stage-chrome-btn" title="Record"><i class="fa-solid fa-circle" style="color:#e5484d;font-size:0.55rem"></i></button>
+                <button type="button" id="recPauseBtn" class="rec-mini-btn hidden" title="Pause"><i class="fa-solid fa-pause"></i></button>
+                <span class="rec-mini-hover">
+                  <button type="button" id="recStopBtn" class="rec-mini-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                </span>
+              </span>
+              <button type="button" id="stageChatBtnTop" class="stage-chrome-btn stage-timer" title="Chat"><i class="fa-regular fa-comments"></i></button>
+              <div class="stage-cards-cluster" id="stageCardsCluster"></div>
+            </div>
+            <div class="stage-hover-footer hidden" id="stageHoverChrome">
+              <div class="stage-react-row" id="stageReactRow">
+                <button type="button" class="emoji-btn" data-emoji="😊">😊</button>
+                <button type="button" class="emoji-btn" data-emoji="👍">👍</button>
+                <button type="button" class="emoji-btn" data-emoji="👏">👏</button>
+                <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
+                <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
+                <button type="button" id="stageHandBtn" class="emoji-btn stage-hand" title="Hand">✋</button>
+                <button type="button" id="stageMicBtn" class="emoji-btn stage-mic-fa" title="Mic"><i class="fa-solid fa-microphone"></i></button>
+                <button type="button" id="stageFsBtn" class="emoji-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
               </div>
+            </div>
+              <div id="bigPlaceholder" class="placeholder stage-idle-bg" aria-hidden="true"></div>
               <div class="big-view-label" id="bigViewLabel"></div>
               <div id="reactionOverlay" class="reaction-overlay" aria-hidden="true"></div>
-              <button id="screenFsBtn" class="btn icon-btn screen-fs-btn" title="Fullscreen shared screen">
-                <i class="fa-solid fa-expand"></i>
-              </button>
-              <button id="chatOverlayBtn" class="btn icon-btn chat-overlay-btn" title="Toggle chat on screen (C)" aria-pressed="false">
-                <i class="fa-regular fa-comments"></i>
-              </button>
+              <!-- screenFsBtn and chatOverlayBtn removed from stage -->
               <div id="chatPipStack" class="chat-pip-stack" aria-live="polite"></div>
               <div id="chatScreenOverlay" class="chat-screen-overlay hidden">
                 <div class="chat-screen-overlay-header">
@@ -561,14 +753,13 @@
                 <div class="dyn-pane" data-pane="screens" id="dynPaneScreens">
                   <div class="screen-timeline" id="screenTimeline">
                     <div class="st-header">
-                      <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
                       <label class="st-slideshow-toggle" title="Slideshow on/off">
                         <input type="checkbox" id="stSlideshowToggle">
                         <span>Slideshow</span>
                       </label>
                     </div>
                     <div class="st-slots" id="stSlots">
-                      <p class="st-empty" id="stEmpty">No timeline images yet. Hosts can add up to 10 images.</p>
+                      <p class="st-empty" id="stEmpty"> Hosts can add up to 10 images.</p>
                     </div>
                     <div class="st-actions host-cohost-only hidden" id="stActions">
                       <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtn"><i class="fa-solid fa-plus"></i> Add images</button>
@@ -586,7 +777,7 @@
                   <div class="reaction-row dyn-reaction-row" id="dynEmojiBar">
                     <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs up">👍</button>
                     <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
-                    <button type="button" class="emoji-btn" data-emoji="❤️" title="Heart">❤️</button>
+                    <button type="button" class="emoji-btn" data-emoji="😊" title="Heart">😊</button>
                     <button type="button" class="emoji-btn" data-emoji="😂" title="Laugh">😂</button>
                     <button type="button" class="emoji-btn" data-emoji="🎉" title="Celebrate">🎉</button>
                     <button type="button" class="emoji-btn" data-emoji="😮" title="Wow">😮</button>
@@ -641,11 +832,11 @@
                   <span>More</span>
                 </button>
                 <div id="meetingMorePanel" class="meeting-more-panel hidden" role="menu">
-                  <div class="more-section-label">Reactions</div>
+                  
                   <div class="reaction-row" id="emojiBar">
                     <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs up">👍</button>
                     <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
-                    <button type="button" class="emoji-btn" data-emoji="❤️" title="Heart">❤️</button>
+                    <button type="button" class="emoji-btn" data-emoji="😊" title="Heart">😊</button>
                     <button type="button" class="emoji-btn" data-emoji="😂" title="Laugh">😂</button>
                     <button type="button" class="emoji-btn" data-emoji="🎉" title="Celebrate">🎉</button>
                   </div>
@@ -763,8 +954,8 @@
       </div>
     </div>
 
-    <footer class="footer">
-      <span>Meeting the CisTech way...</span>
+    <footer class="footer meeting-home-footer">
+      <span></span>
     </footer>
   </div>
 
@@ -1029,12 +1220,49 @@
         <label class="checkbox-label"><input type="checkbox" id="recVideo" checked> Video</label>
         <label class="checkbox-label"><input type="checkbox" id="recScreen" checked> Screen sharing</label>
         <label class="checkbox-label"><input type="checkbox" id="recChat" checked> Chat</label>
+        <p id="recordModalState" class="modal-sub" style="margin-top:0.5rem"></p>
         <div class="modal-actions">
           <button type="button" id="recordCancelBtn" class="btn">Cancel</button>
           <button type="button" id="recordStartBtn" class="btn primary-btn">Start recording</button>
+          <button type="button" id="recordPauseBtnModal" class="btn hidden">Pause</button>
+          <button type="button" id="recordStopBtnModal" class="btn danger-btn hidden">Stop &amp; save</button>
         </div>
       </div>
     </div>
+
+    <!-- Whiteboard modal -->
+    <div id="whiteboardModal" class="modal hidden">
+      <div class="modal-backdrop" id="whiteboardModalBackdrop"></div>
+      <div class="modal-card" style="max-width:900px;width:95%">
+        <h2>Whiteboard</h2>
+        <div class="wb-toolbar">
+          <input type="color" id="wbColor" value="#111111" title="Color">
+          <button type="button" class="btn small-btn" id="wbPen">Pen</button>
+          <button type="button" class="btn small-btn" id="wbEraser">Eraser</button>
+          <button type="button" class="btn small-btn" id="wbClear">Clear</button>
+          <button type="button" class="btn small-btn" id="wbExport">Export PNG</button>
+          <button type="button" class="btn small-btn" id="whiteboardClose">Close</button>
+        </div>
+        <div class="whiteboard-wrap"><canvas id="whiteboardCanvas" width="1200" height="720"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Breakout modal -->
+    <div id="breakoutModal" class="modal hidden">
+      <div class="modal-backdrop" id="breakoutModalBackdrop"></div>
+      <div class="modal-card">
+        <h2>Breakout rooms</h2>
+        <p class="modal-sub">Host can split participants into rooms.</p>
+        <label>Number of rooms <input type="number" id="breakoutCount" min="2" max="10" value="2" style="width:4rem"></label>
+        <div class="modal-actions" style="margin-top:0.75rem">
+          <button type="button" id="breakoutCancel" class="btn">Cancel</button>
+          <button type="button" id="breakoutCreate" class="btn primary-btn">Create &amp; assign</button>
+          <button type="button" id="breakoutCloseAll" class="btn">Close all rooms</button>
+        </div>
+        <ul id="breakoutList" class="breakout-list"></ul>
+      </div>
+    </div>
+
 
     
     <!-- INVITE DRAWER (P1) -->
@@ -1086,6 +1314,6 @@
   <script src="js/features/mute.js?v=20260924secMob1"></script>
   <script src="js/features/device-icons.js?v=20260924secMob1"></script>
   <script src="js/main.js?v=20260924secMob1"></script>
-  <script src="js/core/app.js?v=20261002mobileFirstK"></script>
+  <script src="js/core/app.js?v=20261006drawerFix"></script>
 </body>
 </html>

@@ -1,8 +1,12 @@
-/** Plugin: in-meeting chat — text, mentions, images (webp), file attachments */
+/** Plugin: in-meeting chat — text, mentions, images (webp), file attachments
+ *  Permanent: messages are written to chat_messages and linked to meeting history / artifact.
+ */
+
+const db = require('../../db');
 
 const MAX_TEXT = 2000;
-const MAX_IMAGE_DATA_CHARS = 900_000; // ~0.7MB base64 after client webp compress
-const MAX_FILE_DATA_CHARS = 2_800_000; // ~2MB base64 for generic attachments
+const MAX_IMAGE_DATA_CHARS = 900_000;
+const MAX_FILE_DATA_CHARS = 2_800_000;
 const MAX_HISTORY = 150;
 
 module.exports = {
@@ -64,12 +68,51 @@ module.exports = {
         meeting.chatHistory = meeting.chatHistory.slice(-MAX_HISTORY);
       }
       broadcast(meetingCode, chatMsg);
+
+      const attachForDb = attachment
+        ? {
+            kind: attachment.kind,
+            name: attachment.name,
+            mime: attachment.mime,
+            size: attachment.size,
+            dataUrl:
+              attachment.dataUrl && attachment.dataUrl.length < 200_000
+                ? attachment.dataUrl
+                : null,
+            omitted: !!(attachment.dataUrl && attachment.dataUrl.length >= 200_000),
+          }
+        : null;
+
+      Promise.resolve()
+        .then(async () => {
+          let artifactId = meeting.artifactId || null;
+          if (!artifactId && meeting.historyId) {
+            try {
+              const art = await db.ensureArtifactForHistory(meeting.historyId, meetingCode);
+              if (art) {
+                meeting.artifactId = art.id;
+                artifactId = art.id;
+              }
+            } catch (_) {}
+          }
+          await db.saveChatMessage({
+            meetingHistoryId: meeting.historyId || null,
+            artifactId,
+            sessionId: meetingCode,
+            senderId: participantId,
+            senderName: p.name,
+            senderUserId: p.userId || null,
+            body: text || null,
+            attachments: attachForDb,
+            groupId: null,
+          });
+        })
+        .catch((e) => console.warn('[chat] persist', e.message));
     });
 
     ctx.onRegister((ws, meeting) => {
       if (!meeting || !Array.isArray(meeting.chatHistory) || !meeting.chatHistory.length) return;
       try {
-        // Strip heavy dataUrls from history catch-up if too large overall
         const messages = meeting.chatHistory.slice(-80).map((m) => {
           if (!m.attachment || !m.attachment.dataUrl) return m;
           if (m.attachment.dataUrl.length > 400_000) {

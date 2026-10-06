@@ -511,9 +511,18 @@
             <span>${formatDate(h.createdAt)}</span>
             <span>${status}</span>
             <span>${h.maxParticipants} people max</span>
+            ${h.artifactUrl ? '<button type="button" class="btn small-btn history-artifact-btn" data-artifact-url="' + escapeHtml(h.artifactUrl) + '">View Artifacts</button>' : ''}
           </div>
         `;
-        li.addEventListener('click', () => openHistoryDetail(h.id));
+        li.addEventListener('click', (ev) => {
+          if (ev.target && ev.target.closest && ev.target.closest('[data-artifact-url]')) {
+            ev.stopPropagation();
+            const url = ev.target.closest('[data-artifact-url]').getAttribute('data-artifact-url');
+            if (url) openArtifactFromPath(url);
+            return;
+          }
+          openHistoryDetail(h.id);
+        });
         historyList.appendChild(li);
       });
     } catch (e) {
@@ -548,10 +557,112 @@
           historyDetailParticipants.appendChild(li);
         });
       }
+      let artBtn = document.getElementById('historyArtifactBtn');
+      if (!artBtn && historyDetail) {
+        artBtn = document.createElement('button');
+        artBtn.id = 'historyArtifactBtn';
+        artBtn.className = 'btn primary-btn';
+        artBtn.style.marginTop = '0.75rem';
+        historyDetail.appendChild(artBtn);
+      }
+      if (artBtn) {
+        if (data.artifact && data.artifact.url) {
+          artBtn.classList.remove('hidden');
+          artBtn.textContent = 'View Artifacts';
+          artBtn.onclick = () => openArtifactFromPath(data.artifact.url);
+        } else {
+          artBtn.classList.add('hidden');
+        }
+      }
     } catch (e) {
       alert(e.message);
     }
   }
+
+  function openArtifactFromPath(path) {
+    const parts = String(path).split('/').filter(Boolean);
+    if (parts.length >= 3) openArtifactViewer(parts[1], parts[2]);
+  }
+
+  async function openArtifactViewer(code, slug) {
+    try {
+      const data = await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug));
+      const av = document.getElementById('artifactView');
+      document.getElementById('homeView')?.classList.add('hidden');
+      document.getElementById('meetingView')?.classList.add('hidden');
+      document.getElementById('historyView')?.classList.add('hidden');
+      if (av) av.classList.remove('hidden');
+      const title = document.getElementById('artifactTitle');
+      if (title) title.textContent = (data.meeting && data.meeting.name) || 'Meeting Artifact';
+      const meta = document.getElementById('artifactMeta');
+      if (meta) {
+        meta.textContent = 'Code ' + (data.artifact.code || code) +
+          (data.meeting && data.meeting.endedAt ? ' · Ended ' + formatDate(data.meeting.endedAt) : '') +
+          (data.artifact.isLive ? ' · LIVE' : ' · Archived');
+      }
+      const chatEl = document.getElementById('artifactChat');
+      if (chatEl) {
+        chatEl.innerHTML = (data.chat || []).map(function (c) {
+          return '<div class="msg"><strong>' + escapeHtml(c.senderName || 'Someone') + '</strong> ' + escapeHtml(c.body || '') + '</div>';
+        }).join('') || '<p class="history-empty">No chat messages saved.</p>';
+      }
+      const partEl = document.getElementById('artifactParticipants');
+      if (partEl) {
+        partEl.innerHTML = '';
+        (data.participants || []).forEach(function (p) {
+          const li = document.createElement('li');
+          li.textContent = p.displayName + (p.joinedAt ? ' · ' + formatDate(p.joinedAt) : '');
+          partEl.appendChild(li);
+        });
+      }
+      const recEl = document.getElementById('artifactRecordings');
+      if (recEl) {
+        recEl.innerHTML = '';
+        (data.recordings || []).forEach(function (r) {
+          const li = document.createElement('li');
+          li.textContent = 'Recording #' + r.id + ' · ' + (r.status || '') + (r.fileUrl ? '' : ' (no file yet)');
+          if (r.fileUrl) {
+            li.innerHTML = '<a href="' + escapeHtml(r.fileUrl) + '" target="_blank" rel="noopener">Recording #' + r.id + '</a>';
+          }
+          recEl.appendChild(li);
+        });
+        if (!(data.recordings || []).length) recEl.innerHTML = '<li class="history-empty">No recordings</li>';
+      }
+      const notes = document.getElementById('artifactNotes');
+      if (notes) notes.value = (data.note && data.note.content) || '';
+      const restart = document.getElementById('artifactRestartBtn');
+      if (restart) {
+        restart.classList.toggle('hidden', !data.isHost);
+        restart.onclick = async function () {
+          try {
+            const res = await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug) + '/restart', { method: 'POST', body: '{}' });
+            if (res.joinUrl) location.href = res.joinUrl;
+          } catch (err) { alert(err.message); }
+        };
+      }
+      const saveNotes = document.getElementById('artifactSaveNotes');
+      if (saveNotes) {
+        saveNotes.onclick = async function () {
+          try {
+            await api('/api/artifacts/' + encodeURIComponent(code) + '/' + encodeURIComponent(slug) + '/note', {
+              method: 'POST',
+              body: JSON.stringify({ content: (document.getElementById('artifactNotes') || {}).value || '' }),
+            });
+            if (typeof showToast === 'function') showToast('Notes saved');
+          } catch (err) { alert(err.message); }
+        };
+      }
+      const closeBtn = document.getElementById('artifactCloseBtn');
+      if (closeBtn) closeBtn.onclick = function () { if (av) av.classList.add('hidden'); showHistory(); };
+    } catch (e) {
+      alert(e.message || 'Failed to load artifact');
+    }
+  }
+
+  (function checkArtifactDeepLink() {
+    const m = location.pathname.match(/^\/m\/([^/]+)\/([^/]+)\/?$/);
+    if (m) setTimeout(function () { openArtifactViewer(m[1], m[2]); }, 200);
+  })();
 
   historyBtn?.addEventListener('click', showHistory);
   historyCloseBtn?.addEventListener('click', () => {
@@ -711,6 +822,7 @@
           renderCards();
         }
         try { updateShareButton(); } catch (_) {}
+        try { if (typeof window.__meetRefreshChatLive === 'function') window.__meetRefreshChatLive(); } catch (_) {}
         if ((msg.type === 'participant-left' || msg.type === 'share-stopped' || msg.type === 'participant-removed') && watchingId === msg.participantId) {
           clearBigView();
         }
@@ -807,12 +919,24 @@
       }
       if (msg.type === 'chat') {
         appendChatMessage(msg); try { if (typeof window.__syncAllChatSurfaces === 'function') window.__syncAllChatSurfaces(); } catch (_) {}
+        try {
+          if (typeof window.__meetNotePublicChat === 'function') {
+            window.__meetNotePublicChat(msg.text || '', msg.name || '', msg.participantId);
+          }
+        } catch (_) {}
         return;
       }
       if (msg.type === 'chat-history') {
         var box = $('chatMessages');
         if (box) box.innerHTML = '';
         (msg.messages || []).forEach(function (m) { appendChatMessage(m); });
+        try {
+          if (typeof window.__meetNotePublicChat === 'function') {
+            (msg.messages || []).forEach(function (m) {
+              window.__meetNotePublicChat(m.text || '', m.name || '', m.participantId);
+            });
+          }
+        } catch (_) {}
         // Sync mobile/tablet chat surfaces so history shows without needing to send first
         try {
           if (typeof window.__syncAllChatSurfaces === 'function') window.__syncAllChatSurfaces();
@@ -1379,7 +1503,9 @@
     const lkVid = document.getElementById('lkScreenVideo');
     if (lkVid) try { lkVid.remove(); } catch (_) {}
     if (remoteVideo) {
-      remoteVideo.style.display = '';
+      // No screen share is active: keep the placeholder artwork visible instead
+      // of letting the empty remote video element paint over the stage.
+      remoteVideo.style.display = 'none';
       remoteVideo.style.opacity = '';
       remoteVideo.srcObject = null;
       remoteVideo.classList.remove('active');
@@ -1398,7 +1524,7 @@
     // restore default placeholder text
     if (bigPlaceholder) {
       const p = bigPlaceholder.querySelector('p');
-      if (p) p.textContent = 'No screen selected';
+      if (p) p.textContent = ''; /* idle art via CSS */;
     }
     const contentView = document.getElementById('contentView');
     if (contentView) contentView.classList.add('hidden');
@@ -1636,6 +1762,16 @@
       shareBtn.innerHTML = '<i class="fa-solid fa-desktop"></i><span>Share</span>';
       shareBtn.title = 'Share screen';
     }
+    try {
+      var sideLbl = document.getElementById('sideShareScreenLabel');
+      if (sideLbl) sideLbl.textContent = isSharing ? 'Stop sharing' : 'Share screen';
+      var mediaShare = document.getElementById('mediaShareBtn');
+      if (mediaShare) {
+        mediaShare.innerHTML = isSharing
+          ? '<i class="fa-solid fa-display"></i> Stop sharing'
+          : '<i class="fa-solid fa-display"></i> Screen share';
+      }
+    } catch (_) {}
   }
 
   function updateMicButton() {
@@ -1648,6 +1784,24 @@
         : '<i class="fa-solid fa-microphone-slash"></i><span>Mic</span>';
       micBtn.title = micOn ? 'Mute microphone (M)' : 'Unmute microphone (M)';
     }
+    try {
+      const rail = document.getElementById('railMicBtn') || document.querySelector('[data-panel="media"]');
+      const mediaLabel = document.getElementById('mediaMicLabel');
+      const mediaToggle = document.getElementById('mediaMicToggle');
+      if (mediaLabel) mediaLabel.textContent = micOn ? 'Mic on' : 'Mic off';
+      if (mediaToggle) {
+        mediaToggle.innerHTML = micOn
+          ? '<i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span>'
+          : '<i class="fa-solid fa-microphone-slash"></i> <span id="mediaMicLabel">Mic off</span>';
+      }
+      document.querySelectorAll('#stageMicBtn').forEach((b) => {
+        b.innerHTML = micOn
+          ? '<i class="fa-solid fa-microphone"></i>'
+          : '<i class="fa-solid fa-microphone-slash"></i>';
+        b.classList.toggle('muted', !micOn);
+        b.title = micOn ? 'Mute' : 'Unmute';
+      });
+    } catch (_) {}
     // Mobile/tablet footer mic must mirror state immediately (host force-mute etc.)
     var mfnMic = document.getElementById('mfnMic');
     if (mfnMic) {
@@ -1864,9 +2018,23 @@
 
       li.innerHTML = `
         ${deviceHtml}
-        <span class="p-name">${escapeHtml(p.name)}${p.id === myId ? ' <span class="me-tag">(you)</span>' : ''}${roleHtml}${handHtml}${muteTag}</span>
+        <span class="p-name">${escapeHtml(p.name)}${p.id === myId ? ' <span class="me-tag">(you)</span>' : ''}${roleHtml}${handHtml}${muteTag}<span class="p-wave hidden" data-wave-for="${escapeHtml(p.id)}"><span></span><span></span><span></span></span></span>
         ${p.sharing ? '<span class="live-dot" title="Sharing screen" aria-label="Sharing"></span>' : ''}
       `;
+      if (p.id !== myId) {
+        const pm = document.createElement('button');
+        pm.type = 'button';
+        pm.className = 'btn icon-btn pm-btn';
+        pm.title = 'Private message';
+        pm.innerHTML = '<i class="fa-regular fa-envelope"></i>';
+        pm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (typeof window.__meetOpenDm === 'function') {
+            window.__meetOpenDm(p.id, p.name, p.userId || null);
+          }
+        });
+        li.appendChild(pm);
+      }
 
       if (p.id !== myId && (canModerate || opts.waiting || isHostLike())) {
         const more = document.createElement('button');
@@ -2082,6 +2250,7 @@
 
     if (!sharingList.length && !hasTimeline) {
       screenCards.classList.add('empty');
+      try { mirrorScreenCardsToSide(); } catch (_) {}
       return;
     }
     screenCards.classList.remove('empty');
@@ -2159,6 +2328,35 @@
       wrap.appendChild(extra);
       screenCards.appendChild(wrap);
     }
+    try { mirrorScreenCardsToSide(); } catch (_) {}
+  }
+
+  function mirrorScreenCardsToSide() {
+    var side = document.getElementById('sideScreenCards');
+    if (!side) return;
+    side.innerHTML = '';
+    var src = document.getElementById('screenCards');
+    var cards = src ? src.querySelectorAll('.screen-card') : [];
+    if (!cards.length) {
+      side.innerHTML = '<p class="st-empty quiet-label" id="sideScreenCardsEmpty">No active screen shares</p>';
+      var badge = document.getElementById('railScreensBadge');
+      if (badge) { badge.textContent = ''; badge.classList.add('hidden'); }
+      return;
+    }
+    var n = 0;
+    cards.forEach(function (c) {
+      n += 1;
+      var clone = c.cloneNode(true);
+      clone.addEventListener('click', function () {
+        try { c.click(); } catch (_) {}
+      });
+      side.appendChild(clone);
+    });
+    var badge = document.getElementById('railScreensBadge');
+    if (badge) {
+      badge.textContent = n ? String(n) : '';
+      badge.classList.toggle('hidden', !n);
+    }
   }
 
   async function onCardClick(p) {
@@ -2233,6 +2431,17 @@
     homeView?.classList.add('hidden');
     historyView?.classList.add('hidden');
     meetingView?.classList.remove('hidden');
+    try { startMeetingDurationTimer(); } catch (_) {}
+    try {
+      const ed = document.getElementById('liveNotesEditor');
+      if (ed && currentMeeting) {
+        const v = localStorage.getItem('meet-notes-' + currentMeeting.code);
+        if (v != null) ed.value = v;
+      }
+    } catch (_) {}
+    try {
+      if (typeof window.__meetMaybeAutoRecord === 'function') setTimeout(window.__meetMaybeAutoRecord, 800);
+    } catch (_) {}
     leaveBtn?.classList.remove('hidden');
     try {
       const rb = document.getElementById('rejoinBar');
@@ -2272,7 +2481,88 @@
     await connectLiveKit();
   }
 
+  function resetMeetingState() {
+    // Phase 1: clear leaked DOM / JS state between meetings
+    try {
+      var chatBox = document.getElementById('chatMessages');
+      if (chatBox) chatBox.innerHTML = '';
+    } catch (_) {}
+    try {
+      var recent = document.getElementById('recentReactions');
+      if (recent) recent.innerHTML = '';
+    } catch (_) {}
+    try {
+      document.querySelectorAll('.reaction-overlay, .flying-reaction').forEach(function (el) {
+        try { el.remove(); } catch (_) {}
+      });
+    } catch (_) {}
+    try {
+      if (typeof window.__resetScreenTimeline === 'function') window.__resetScreenTimeline();
+    } catch (_) {}
+    try { clearBigView(); } catch (_) {}
+    try {
+      var notes = document.getElementById('notesEditor');
+      if (notes) notes.value = '';
+    } catch (_) {}
+    try {
+      if (typeof activityEntries !== 'undefined') activityEntries.length = 0;
+    } catch (_) {}
+    try {
+      if (typeof recentReactions !== 'undefined') recentReactions.length = 0;
+    } catch (_) {}
+    try { recordingState = null; } catch (_) {}
+    try {
+      if (window.__meetingDurationTimer) {
+        clearInterval(window.__meetingDurationTimer);
+        window.__meetingDurationTimer = null;
+      }
+      var durEl = document.getElementById('meetingDurationTimer');
+      if (durEl) { durEl.textContent = ''; durEl.classList.add('hidden'); }
+    } catch (_) {}
+    try {
+      var badge = document.getElementById('recordingBadge');
+      if (badge) badge.classList.add('hidden');
+      if (window.__recTimerInterval) {
+        clearInterval(window.__recTimerInterval);
+        window.__recTimerInterval = null;
+      }
+    } catch (_) {}
+    try {
+      if (window.__clientRecorder) {
+        try { window.__clientRecorder.stop(); } catch (_) {}
+        window.__clientRecorder = null;
+      }
+    } catch (_) {}
+    participants = [];
+  }
+
+
+  function startMeetingDurationTimer() {
+    try {
+      if (window.__meetingDurationTimer) clearInterval(window.__meetingDurationTimer);
+      var el = document.getElementById('meetingDurationTimer');
+      if (!el) return;
+      el.classList.remove('hidden');
+      el.style.display = 'inline-flex';
+      var start = Date.now();
+      function tick() {
+        var s = Math.floor((Date.now() - start) / 1000);
+        var m = Math.floor(s / 60);
+        var h = Math.floor(m / 60);
+        m = m % 60; s = s % 60;
+        el.textContent = h > 0
+          ? (h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'))
+          : (String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'));
+      }
+      tick();
+      window.__meetingDurationTimer = setInterval(tick, 1000);
+    } catch (_) {}
+  }
+
   async function leaveMeeting() {
+    try {
+      if (typeof window.__meetFlushRecordingOnLeave === 'function') window.__meetFlushRecordingOnLeave();
+    } catch (_) {}
     if (currentMeeting) {
       try {
         await api('/api/leave', {
@@ -2288,9 +2578,8 @@
     if (wsRetryTimer) clearTimeout(wsRetryTimer);
     if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} ws = null; }
     await disconnectLiveKit();
-    clearBigView();
+    resetMeetingState();
     currentMeeting = null;
-    participants = [];
     saveSession(null);
     clearMeetingUrl(false);
 
@@ -2305,7 +2594,6 @@
     try {
       if (document.fullscreenElement) document.exitFullscreen?.();
     } catch (_) {}
-    if (typeof window.__resetScreenTimeline === 'function') window.__resetScreenTimeline();
     $('endMeetBtnTop')?.classList.add('hidden');
     if (typeof syncMoreMenuInCall === 'function') syncMoreMenuInCall();
     setWsStatus('left');
@@ -2752,6 +3040,11 @@
   function appendChatMessage(msg) {
     const box = $('chatMessages');
     if (!box) return;
+    // When a private/sub-group thread is open, don't mix public messages into the thread DOM
+    try {
+      var chId = (typeof window.__meetActiveChannelId !== 'undefined') ? window.__meetActiveChannelId : null;
+      if (chId && chId !== 'everyone') return;
+    } catch (_) {}
     applySelfChatColor();
     const row = document.createElement('div');
     const isMe = msg.participantId === currentMeeting?.participantId;
@@ -3009,14 +3302,28 @@
       mentions: mentions,
       attachment: attachment || null,
     });
+    try {
+      if (typeof window.__meetNotePublicChat === 'function') {
+        var nm = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
+        window.__meetNotePublicChat(text, (nm && nm.name) || 'Me');
+      }
+    } catch (_) {}
   }
 
   function showReaction(msg) {
     const overlay = $('reactionOverlay');
     if (!overlay) return;
+    // debounce identical emoji+from within 400ms to prevent doubles
+    const key = String(msg.fromId || msg.from || '') + '|' + String(msg.emoji || '');
+    const now = Date.now();
+    if (!window.__rxDedup) window.__rxDedup = {};
+    if (window.__rxDedup[key] && now - window.__rxDedup[key] < 450) return;
+    window.__rxDedup[key] = now;
     const el = document.createElement('div');
     el.className = 'flying-reaction';
-    el.textContent = msg.emoji || '👍';
+    const name = msg.fromName || msg.from || msg.name || '';
+    el.innerHTML = '<span class="rx-emoji">' + (msg.emoji || '👍') + '</span>' +
+      (name ? '<span class="rx-name">' + escapeHtml(String(name)) + '</span>' : '');
     el.style.left = (20 + Math.random() * 60) + '%';
     overlay.appendChild(el);
     setTimeout(function () { el.remove(); }, 2100);
@@ -4484,12 +4791,27 @@
   function updateRecordingBadge() {
     const badge = document.getElementById('recordingBadge');
     const timer = document.getElementById('recordingTimer');
+    const bar = document.getElementById('recControlsBar');
+    const statusLabel = document.getElementById('recordingStatusLabel');
+    const isHost = myRole === 'host' || currentMeeting?.isHost;
     if (!badge) return;
-    if (recordingState && recordingState.status === 'recording') {
+    const active = recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused');
+    if (active) {
       badge.classList.remove('hidden');
+      if (statusLabel) statusLabel.textContent = recordingState.status === 'paused' ? 'Paused' : 'Recording';
+      if (bar) {
+        bar.classList.toggle('hidden', !isHost);
+        const pauseBtn = document.getElementById('recPauseBtn');
+        if (pauseBtn) pauseBtn.textContent = recordingState.status === 'paused' ? 'Resume' : 'Pause';
+      }
       const start = recordingState.startedAt || Date.now();
+      const pausedExtra = recordingState.pausedTotalMs || 0;
       const tick = () => {
-        const sec = Math.max(0, Math.floor((Date.now() - start) / 1000));
+        let elapsed = Date.now() - start - pausedExtra;
+        if (recordingState.status === 'paused' && recordingState.pausedAt) {
+          elapsed = recordingState.pausedAt - start - pausedExtra;
+        }
+        const sec = Math.max(0, Math.floor(elapsed / 1000));
         const m = String(Math.floor(sec / 60)).padStart(2, '0');
         const s = String(sec % 60).padStart(2, '0');
         if (timer) timer.textContent = m + ':' + s;
@@ -4499,9 +4821,28 @@
       recordingTimerInterval = setInterval(tick, 1000);
     } else {
       badge.classList.add('hidden');
+      if (bar) bar.classList.add('hidden');
       if (recordingTimerInterval) clearInterval(recordingTimerInterval);
       recordingTimerInterval = null;
     }
+    // Modal buttons
+    try {
+      const startBtn = document.getElementById('recordStartBtn');
+      const pauseM = document.getElementById('recordPauseBtnModal');
+      const stopM = document.getElementById('recordStopBtnModal');
+      const stateEl = document.getElementById('recordModalState');
+      if (active) {
+        if (startBtn) { startBtn.classList.add('hidden'); startBtn.disabled = true; }
+        if (pauseM) { pauseM.classList.remove('hidden'); pauseM.textContent = recordingState.status === 'paused' ? 'Resume' : 'Pause'; }
+        if (stopM) stopM.classList.remove('hidden');
+        if (stateEl) stateEl.textContent = recordingState.status === 'paused' ? 'Recording is paused.' : 'Recording in progress…';
+      } else {
+        if (startBtn) { startBtn.classList.remove('hidden'); startBtn.disabled = false; startBtn.textContent = 'Start recording'; }
+        if (pauseM) pauseM.classList.add('hidden');
+        if (stopM) stopM.classList.add('hidden');
+        if (stateEl) stateEl.textContent = recordingState && recordingState.status === 'stopped' ? 'Last recording saved to Artifacts / history.' : '';
+      }
+    } catch (_) {}
   }
 
   async function refreshDiagnostics() {
@@ -4679,6 +5020,27 @@
       recordingState = msg.recording || null;
       updateRecordingBadge();
       refreshPhase2Chrome();
+      // Phase 1 recording UX: reflect state on menu / modal
+      try {
+        var recItem = document.querySelector('.more-record');
+        if (recItem) {
+          if (recordingState && recordingState.status === 'recording') {
+            recItem.innerHTML = '<i class="fa-solid fa-stop"></i> Stop recording';
+          } else if (recordingState && recordingState.status === 'stopped') {
+            recItem.innerHTML = '<i class="fa-solid fa-circle"></i> Recorded → Artifacts';
+          } else {
+            recItem.innerHTML = '<i class="fa-solid fa-circle"></i> Record';
+          }
+        }
+        var startBtn = document.getElementById('recordStartBtn');
+        if (startBtn && recordingState && recordingState.status === 'recording') {
+          startBtn.disabled = true;
+          startBtn.textContent = 'Already recording…';
+        } else if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.textContent = 'Start recording';
+        }
+      } catch (_) {}
     },
     toast: function (msg) {
       if (msg.message) showToast(msg.message);
@@ -5634,7 +5996,7 @@
         if (timer) clearTimeout(timer);
         timer = null;
         if (!longPress && currentMeeting) {
-          try { sendWS({ type: 'reaction', emoji: '❤️' }); } catch (_) {}
+          try { sendWS({ type: 'reaction', emoji: '😊' }); } catch (_) {}
         }
       }
       btn.addEventListener('pointerup', endPress);
@@ -6270,7 +6632,7 @@
     }
 
     function noteReaction(from, emoji) {
-      recentReactions.unshift({ from: from || 'Someone', emoji: emoji || '❤️', t: Date.now() });
+      recentReactions.unshift({ from: from || 'Someone', emoji: emoji || '😊', t: Date.now() });
       if (recentReactions.length > 20) recentReactions.length = 20;
       if (activePane === 'reactions') renderRecentReactions();
     }
@@ -6818,5 +7180,1993 @@
     });
   })();
 
+
+  // ========== Phase 1/2 client features (INSIDE main IIFE scope) ==========
+  (function phase2ClientFeatures() {
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let notesSaveTimer = null;
+    let autoRecordEnabled = false;
+
+    function isHostNow() {
+      try {
+        return myRole === 'host' || !!(currentMeeting && currentMeeting.isHost);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function safeSend(obj) {
+      try {
+        if (typeof sendWS === 'function') sendWS(obj);
+      } catch (e) {
+        console.warn('sendWS failed', e);
+      }
+    }
+
+    // --- MediaRecorder capture (host) ---
+    async function startClientCapture(options) {
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
+        recordedChunks = [];
+        const streams = [];
+        try {
+          if (!options || options.audio !== false) {
+            const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            streams.push(a);
+          }
+        } catch (e) {
+          console.warn('rec audio', e);
+        }
+        try {
+          if (!options || options.screenShare !== false || options.video !== false) {
+            const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            streams.push(s);
+            s.getVideoTracks().forEach((tr) => {
+              tr.addEventListener('ended', () => {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                  try { mediaRecorder.stop(); } catch (_) {}
+                }
+              });
+            });
+          }
+        } catch (e) {
+          console.warn('rec display', e);
+        }
+        if (!streams.length) {
+          if (typeof showToast === 'function') showToast('Could not access mic/screen for recording');
+          return;
+        }
+        const mixed = new MediaStream();
+        streams.forEach((st) => st.getTracks().forEach((tr) => mixed.addTrack(tr)));
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
+        const recOpts = mime ? { mimeType: mime } : {};
+        mediaRecorder = new MediaRecorder(mixed, recOpts);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          try {
+            downloadRecordingChunks(mime || 'video/webm');
+          } catch (err) {
+            console.warn('rec onstop', err);
+          }
+          streams.forEach((st) => {
+            try { st.getTracks().forEach((tr) => tr.stop()); } catch (_) {}
+          });
+          mediaRecorder = null;
+          window.__clientRecorder = null;
+        };
+        mediaRecorder.start(1000);
+        window.__clientRecorder = mediaRecorder;
+        if (typeof showToast === 'function') showToast('Local recording capture started');
+      } catch (e) {
+        console.warn('startClientCapture', e);
+        if (typeof showToast === 'function') showToast('Recording capture failed: ' + (e.message || e));
+      }
+    }
+
+    function downloadRecordingChunks(mime) {
+      if (!recordedChunks.length) return;
+      const blob = new Blob(recordedChunks, { type: mime || 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const code = (currentMeeting && currentMeeting.code) || 'meet';
+      a.download = 'meet-' + code + '-' + Date.now() + '.webm';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      recordedChunks = [];
+      if (typeof showToast === 'function') showToast('Recording downloaded');
+    }
+
+    function pauseClientCapture() {
+      try {
+        if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.pause();
+      } catch (_) {}
+    }
+    function resumeClientCapture() {
+      try {
+        if (mediaRecorder && mediaRecorder.state === 'paused') mediaRecorder.resume();
+      } catch (_) {}
+    }
+    function stopClientCaptureAndDownload() {
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop(); // triggers onstop → download
+        } else if (recordedChunks.length) {
+          downloadRecordingChunks('video/webm');
+        }
+      } catch (_) {}
+    }
+
+    function togglePauseRecording() {
+      if (!recordingState) return;
+      if (recordingState.status === 'recording') {
+        safeSend({ type: 'pause-recording' });
+        pauseClientCapture();
+      } else if (recordingState.status === 'paused') {
+        safeSend({ type: 'resume-recording' });
+        resumeClientCapture();
+      }
+    }
+
+    function stopAndSaveRecording() {
+      // Download local media, then notify server
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        const orig = mediaRecorder.onstop;
+        mediaRecorder.onstop = function () {
+          try { downloadRecordingChunks('video/webm'); } catch (_) {}
+          safeSend({ type: 'stop-recording' });
+          mediaRecorder = null;
+          window.__clientRecorder = null;
+        };
+        try { mediaRecorder.stop(); } catch (_) {
+          safeSend({ type: 'stop-recording' });
+        }
+      } else {
+        safeSend({ type: 'stop-recording' });
+        if (recordedChunks.length) downloadRecordingChunks('video/webm');
+      }
+    }
+
+    // Wire control buttons
+    document.getElementById('recPauseBtn')?.addEventListener('click', togglePauseRecording);
+    document.getElementById('recStopBtn')?.addEventListener('click', stopAndSaveRecording);
+    document.getElementById('recordPauseBtnModal')?.addEventListener('click', togglePauseRecording);
+    document.getElementById('recordStopBtnModal')?.addEventListener('click', () => {
+      stopAndSaveRecording();
+      document.getElementById('recordModal')?.classList.add('hidden');
+    });
+
+    // --- Notes autosave (pause typing 800ms) ---
+    function notesStorageKey() {
+      const code = (currentMeeting && currentMeeting.code) || 'none';
+      return 'meet-notes-' + code;
+    }
+    function summaryStorageKey() {
+      const code = (currentMeeting && currentMeeting.code) || 'none';
+      return 'meet-summary-' + code;
+    }
+    function saveLiveNotesSilent() {
+      const ed = document.getElementById('liveNotesEditor');
+      if (!ed) return;
+      try {
+        localStorage.setItem(notesStorageKey(), ed.value || '');
+      } catch (_) {}
+    }
+    function scheduleNotesAutosave() {
+      if (notesSaveTimer) clearTimeout(notesSaveTimer);
+      notesSaveTimer = setTimeout(() => {
+        saveLiveNotesSilent();
+        const hint = document.querySelector('#notesTab .notes-hint');
+        if (hint) {
+          const prev = hint.getAttribute('data-base') || hint.textContent;
+          if (!hint.getAttribute('data-base')) hint.setAttribute('data-base', prev);
+          hint.textContent = 'Saved locally ✓';
+          setTimeout(() => {
+            hint.textContent = hint.getAttribute('data-base') || 'Private to you.';
+          }, 1500);
+        }
+      }, 800);
+    }
+    const notesEditor = document.getElementById('liveNotesEditor');
+    if (notesEditor) {
+      notesEditor.addEventListener('input', scheduleNotesAutosave);
+      notesEditor.addEventListener('blur', saveLiveNotesSilent);
+    }
+    document.getElementById('liveNotesSave')?.addEventListener('click', () => {
+      saveLiveNotesSilent();
+      if (typeof showToast === 'function') showToast('Notes saved');
+    });
+    document.getElementById('summarySaveBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('meetingSummaryBox');
+      if (box) {
+        try { localStorage.setItem(summaryStorageKey(), box.innerText || ''); } catch (_) {}
+        if (typeof showToast === 'function') showToast('Summary saved');
+      }
+    });
+    document.getElementById('summaryGenerateBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('meetingSummaryBox');
+      if (!box) return;
+      const list = Array.isArray(participants) ? participants : [];
+      const names = list.map((p) => p.name || p.displayName).filter(Boolean);
+      const notes = document.getElementById('liveNotesEditor')?.value || '';
+      box.innerText =
+        'Meeting ' + ((currentMeeting && currentMeeting.code) || '') + '\n' +
+        'Participants: ' + (names.join(', ') || '—') + '\n' +
+        'Notes: ' + notes.slice(0, 500);
+      try { localStorage.setItem(summaryStorageKey(), box.innerText); } catch (_) {}
+    });
+    document.querySelectorAll('.side-tab[data-tab="notes"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ed = document.getElementById('liveNotesEditor');
+        if (ed) {
+          try { ed.value = localStorage.getItem(notesStorageKey()) || ed.value || ''; } catch (_) {}
+        }
+        const sum = document.getElementById('meetingSummaryBox');
+        if (sum) {
+          try {
+            const s = localStorage.getItem(summaryStorageKey());
+            if (s) sum.innerText = s;
+          } catch (_) {}
+        }
+      });
+    });
+
+    // --- Private chat ---
+    let chatMode = 'public';
+    let privateTargetId = '';
+    function refreshPrivateSelect() {
+      const sel = document.getElementById('privateChatSelect');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">Select participant…</option>';
+      const list = Array.isArray(participants) ? participants : [];
+      const selfId = currentMeeting && currentMeeting.participantId;
+      list.forEach((p) => {
+        const id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = p.name || p.displayName || id;
+        sel.appendChild(opt);
+      });
+      if (cur) sel.value = cur;
+    }
+    document.getElementById('chatModePublic')?.addEventListener('click', () => {
+      chatMode = 'public';
+      document.getElementById('chatModePublic')?.classList.add('active');
+      document.getElementById('chatModePrivate')?.classList.remove('active');
+      document.getElementById('privateChatTarget')?.classList.add('hidden');
+    });
+    document.getElementById('chatModePrivate')?.addEventListener('click', () => {
+      chatMode = 'private';
+      document.getElementById('chatModePrivate')?.classList.add('active');
+      document.getElementById('chatModePublic')?.classList.remove('active');
+      document.getElementById('privateChatTarget')?.classList.remove('hidden');
+      refreshPrivateSelect();
+    });
+    document.getElementById('privateChatSelect')?.addEventListener('change', (e) => {
+      privateTargetId = e.target.value || '';
+    });
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+      chatInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        if ((window.__railChatMode || chatMode) !== 'private') return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!privateTargetId) {
+          if (typeof showToast === 'function') showToast('Select a participant for private chat');
+          return;
+        }
+        const text = chatInput.value.trim();
+        if (!text) return;
+        safeSend({ type: 'private-chat', targetId: privateTargetId, text });
+        chatInput.value = '';
+      }, true);
+    }
+
+    // --- PiP / blur ---
+    window.__meetRequestPiP = async function () {
+      try {
+        const vid = document.querySelector('#bigView video, #screenCards video, video');
+        if (vid && document.pictureInPictureEnabled) {
+          if (document.pictureInPictureElement) await document.exitPictureInPicture();
+          else await vid.requestPictureInPicture();
+        } else if (typeof showToast === 'function') showToast('PiP not available');
+      } catch (e) {
+        if (typeof showToast === 'function') showToast('PiP failed');
+      }
+    };
+    let blurOn = false;
+    window.__meetToggleBlur = function () {
+      blurOn = !blurOn;
+      document.querySelectorAll('video').forEach((v) => {
+        v.style.filter = blurOn ? 'blur(12px)' : '';
+      });
+      if (typeof showToast === 'function') showToast(blurOn ? 'Blur on' : 'Blur off');
+    };
+
+    // --- Whiteboard ---
+    let wbDrawing = false;
+    let wbErase = false;
+    let wbPoints = [];
+    const canvas = document.getElementById('whiteboardCanvas');
+    const ctx2d = canvas ? canvas.getContext('2d') : null;
+    function wbPos(e) {
+      const r = canvas.getBoundingClientRect();
+      const cx = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX);
+      const cy = e.clientY != null ? e.clientY : (e.touches && e.touches[0] && e.touches[0].clientY);
+      return {
+        x: (cx - r.left) * (canvas.width / r.width),
+        y: (cy - r.top) * (canvas.height / r.height),
+      };
+    }
+    function drawStroke(stroke) {
+      if (!ctx2d || !stroke.points || !stroke.points.length) return;
+      ctx2d.strokeStyle = stroke.erase ? '#ffffff' : (stroke.color || '#111');
+      ctx2d.lineWidth = stroke.erase ? 20 : (stroke.width || 3);
+      ctx2d.lineCap = 'round';
+      ctx2d.beginPath();
+      stroke.points.forEach((pt, i) => {
+        if (i === 0) ctx2d.moveTo(pt.x, pt.y);
+        else ctx2d.lineTo(pt.x, pt.y);
+      });
+      ctx2d.stroke();
+    }
+    if (canvas && ctx2d) {
+      canvas.addEventListener('mousedown', (e) => { wbDrawing = true; wbPoints = [wbPos(e)]; });
+      canvas.addEventListener('mousemove', (e) => {
+        if (!wbDrawing) return;
+        wbPoints.push(wbPos(e));
+        drawStroke({
+          points: wbPoints.slice(-2),
+          color: document.getElementById('wbColor')?.value,
+          erase: wbErase,
+        });
+      });
+      const endDraw = () => {
+        if (!wbDrawing) return;
+        wbDrawing = false;
+        if (wbPoints.length > 1) {
+          safeSend({
+            type: 'wb-stroke',
+            points: wbPoints,
+            color: document.getElementById('wbColor')?.value || '#111',
+            erase: wbErase,
+          });
+        }
+        wbPoints = [];
+      };
+      canvas.addEventListener('mouseup', endDraw);
+      canvas.addEventListener('mouseleave', endDraw);
+    }
+    document.getElementById('wbEraser')?.addEventListener('click', () => { wbErase = true; });
+    document.getElementById('wbPen')?.addEventListener('click', () => { wbErase = false; });
+    document.getElementById('wbClear')?.addEventListener('click', () => {
+      safeSend({ type: 'wb-clear' });
+      if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    });
+    document.getElementById('wbExport')?.addEventListener('click', () => {
+      if (!canvas) return;
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'whiteboard.png';
+      a.click();
+    });
+    document.getElementById('whiteboardClose')?.addEventListener('click', () => {
+      document.getElementById('whiteboardModal')?.classList.add('hidden');
+    });
+    document.getElementById('whiteboardModalBackdrop')?.addEventListener('click', () => {
+      document.getElementById('whiteboardModal')?.classList.add('hidden');
+    });
+    window.__meetOpenWhiteboard = function () {
+      document.getElementById('whiteboardModal')?.classList.remove('hidden');
+      safeSend({ type: 'wb-sync' });
+    };
+
+    // --- Breakout ---
+    document.getElementById('breakoutCreate')?.addEventListener('click', () => {
+      const count = parseInt(document.getElementById('breakoutCount')?.value || '2', 10);
+      safeSend({ type: 'breakout-create', count });
+    });
+    document.getElementById('breakoutCloseAll')?.addEventListener('click', () => {
+      safeSend({ type: 'breakout-close' });
+    });
+    document.getElementById('breakoutCancel')?.addEventListener('click', () => {
+      document.getElementById('breakoutModal')?.classList.add('hidden');
+    });
+    window.__meetOpenBreakout = function () {
+      document.getElementById('breakoutModal')?.classList.remove('hidden');
+    };
+
+    document.addEventListener('click', (e) => {
+      const item = e.target.closest && e.target.closest('[data-action]');
+      if (!item) return;
+      const act = item.getAttribute('data-action');
+      if (act === 'pip') { e.preventDefault(); window.__meetRequestPiP && window.__meetRequestPiP(); }
+      if (act === 'blur') { e.preventDefault(); window.__meetToggleBlur && window.__meetToggleBlur(); }
+      if (act === 'whiteboard') { e.preventDefault(); window.__meetOpenWhiteboard && window.__meetOpenWhiteboard(); }
+      if (act === 'breakout') { e.preventDefault(); window.__meetOpenBreakout && window.__meetOpenBreakout(); }
+      if (act === 'notes') {
+        e.preventDefault();
+        const tab = document.querySelector('.side-tab[data-tab="notes"]');
+        if (tab) tab.click();
+      }
+    });
+
+    const morePanel = document.getElementById('dynPaneMore');
+    if (morePanel && !document.getElementById('phase2MoreInject')) {
+      const div = document.createElement('div');
+      div.id = 'phase2MoreInject';
+      div.innerHTML =
+        '<div class="more-hub-section">Collaboration</div>' +
+        '<button type="button" class="more-item" data-action="notes"><i class="fa-solid fa-note-sticky"></i> Notes</button>' +
+        '<button type="button" class="more-item" data-action="whiteboard"><i class="fa-solid fa-chalkboard"></i> Whiteboard</button>' +
+        '<button type="button" class="more-item" data-action="breakout"><i class="fa-solid fa-people-group"></i> Breakout rooms</button>' +
+        '<div class="more-hub-section">Media</div>' +
+        '<button type="button" class="more-item" data-action="pip"><i class="fa-solid fa-window-restore"></i> Picture-in-Picture</button>' +
+        '<button type="button" class="more-item" data-action="blur"><i class="fa-solid fa-droplet"></i> Background blur</button>';
+      morePanel.appendChild(div);
+    }
+
+    // Auto-record checkbox in record modal
+    const recModal = document.getElementById('recordModal');
+    if (recModal && !document.getElementById('autoRecordToggle')) {
+      const label = document.createElement('label');
+      label.className = 'checkbox-label';
+      label.style.display = 'block';
+      label.style.marginTop = '0.5rem';
+      label.innerHTML = '<input type="checkbox" id="autoRecordToggle"> Auto-record when I start a meeting (host)';
+      const actions = recModal.querySelector('.modal-actions');
+      if (actions) recModal.querySelector('.modal-card')?.insertBefore(label, actions);
+      else recModal.querySelector('.modal-card')?.appendChild(label);
+      try {
+        autoRecordEnabled = localStorage.getItem('meet-auto-record') === '1';
+      } catch (_) {}
+      const tog = document.getElementById('autoRecordToggle');
+      if (tog) {
+        tog.checked = autoRecordEnabled;
+        tog.addEventListener('change', () => {
+          autoRecordEnabled = !!tog.checked;
+          try { localStorage.setItem('meet-auto-record', autoRecordEnabled ? '1' : '0'); } catch (_) {}
+        });
+      }
+    }
+
+    // Also on create form if present
+    const createCard = document.querySelector('#homeView .create-card, #createBtn');
+    if (document.getElementById('createBtn') && !document.getElementById('autoRecordCreate')) {
+      const wrap = document.createElement('label');
+      wrap.className = 'checkbox-label';
+      wrap.style.display = 'block';
+      wrap.style.margin = '0.5rem 0';
+      wrap.innerHTML = '<input type="checkbox" id="autoRecordCreate"> Auto-record this meeting';
+      const btn = document.getElementById('createBtn');
+      if (btn && btn.parentNode) btn.parentNode.insertBefore(wrap, btn);
+      const c = document.getElementById('autoRecordCreate');
+      if (c) {
+        try { c.checked = localStorage.getItem('meet-auto-record') === '1'; } catch (_) {}
+        c.addEventListener('change', () => {
+          autoRecordEnabled = !!c.checked;
+          try { localStorage.setItem('meet-auto-record', autoRecordEnabled ? '1' : '0'); } catch (_) {}
+          const t2 = document.getElementById('autoRecordToggle');
+          if (t2) t2.checked = autoRecordEnabled;
+        });
+      }
+    }
+
+    window.__meetMaybeAutoRecord = function () {
+      try {
+        autoRecordEnabled = localStorage.getItem('meet-auto-record') === '1' ||
+          !!(document.getElementById('autoRecordCreate') && document.getElementById('autoRecordCreate').checked);
+      } catch (_) {}
+      if (!autoRecordEnabled || !isHostNow()) return;
+      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) return;
+      setTimeout(() => {
+        safeSend({
+          type: 'start-recording',
+          audio: true,
+          video: true,
+          screenShare: true,
+          chat: true,
+        });
+        // Client capture starts on recording-capture event
+      }, 1200);
+    };
+
+    // On leave: stop recording + download
+    window.__meetFlushRecordingOnLeave = function () {
+      saveLiveNotesSilent();
+      try {
+        const ed = document.getElementById('liveNotesEditor');
+        const notes = (ed && ed.value) || localStorage.getItem(notesStorageKey()) || '';
+        const summary = localStorage.getItem(summaryStorageKey()) || '';
+        if (notes.trim() || summary.trim()) {
+          let body = notes.trim();
+          if (summary.trim()) body += (body ? '\n\n' : '') + '----------\n' + summary.trim();
+          const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'meet-notes-' + ((currentMeeting && currentMeeting.code) || 'session') + '.txt';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }
+      } catch (e) { console.warn('notes export', e); }
+
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          stopClientCaptureAndDownload();
+        } else if (recordedChunks.length) {
+          downloadRecordingChunks('video/webm');
+        }
+        if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) {
+          safeSend({ type: 'stop-recording' });
+        }
+      } catch (e) {
+        console.warn('flush recording', e);
+      }
+    };
+
+    // WS extra handlers — attach to live socket
+    const extraHandlers = {
+      'private-chat': function (msg) {
+        if (typeof window.__meetIngestPrivate === 'function') window.__meetIngestPrivate(msg);
+      },
+      'private-chat-history': function (msg) {
+        if (typeof window.__meetIngestPrivateHistory === 'function') {
+          window.__meetIngestPrivateHistory(msg.messages || []);
+        }
+      },
+      'group-state': function (msg) {
+        if (msg.group && typeof window.__meetIngestGroupState === 'function') {
+          window.__meetIngestGroupState(msg.group);
+        }
+      },
+      'group-members': function (msg) {
+        if (msg.groupId && Array.isArray(msg.members) && typeof window.__meetIngestGroupState === 'function') {
+          var ch = typeof chatChannels !== 'undefined' ? chatChannels[msg.groupId] : null;
+          window.__meetIngestGroupState({
+            id: msg.groupId,
+            title: ch ? ch.title : 'Group',
+            members: msg.members,
+          });
+        }
+      },
+      'group-chat': function (msg) {
+        if (typeof window.__meetIngestGroupChat === 'function') window.__meetIngestGroupChat(msg);
+      },
+      'group-chat-history': function (msg) {
+        if (!msg.groupId || !Array.isArray(msg.messages)) return;
+        msg.messages.forEach(function (m) {
+          if (typeof window.__meetIngestGroupChat === 'function') {
+            window.__meetIngestGroupChat({ message: Object.assign({ groupId: msg.groupId }, m) });
+          }
+        });
+      },
+      'group-removed': function (msg) {
+        if (!msg.groupId) return;
+        try {
+          if (typeof chatChannels !== 'undefined' && chatChannels[msg.groupId]) {
+            delete chatChannels[msg.groupId];
+            if (activeChannelId === msg.groupId && typeof showChatInbox === 'function') showChatInbox();
+          }
+        } catch (_) {}
+      },
+      'recording-capture': function (msg) {
+        if (!isHostNow()) return;
+        if (msg.action === 'start') startClientCapture(msg.options || {});
+        if (msg.action === 'pause') pauseClientCapture();
+        if (msg.action === 'resume') resumeClientCapture();
+        if (msg.action === 'stop') {
+          try {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+              // already stopping via stopAndSave; avoid double
+            }
+          } catch (_) {}
+        }
+      },
+      'wb-stroke': function (msg) { if (msg.stroke) drawStroke(msg.stroke); },
+      'wb-clear': function () {
+        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      },
+      'wb-sync': function (msg) {
+        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        (msg.strokes || []).forEach(drawStroke);
+      },
+      'breakout-state': function (msg) {
+        const list = document.getElementById('breakoutList');
+        if (!list) return;
+        list.innerHTML = '';
+        ((msg.breakouts && msg.breakouts.rooms) || []).forEach((r) => {
+          const li = document.createElement('li');
+          li.textContent = r.name + ' (' + ((r.participantIds && r.participantIds.length) || 0) + ' people)';
+          list.appendChild(li);
+        });
+      },
+      'breakout-assign': function (msg) {
+        if (typeof showToast === 'function') showToast('Assigned to ' + ((msg.room && msg.room.name) || 'breakout'));
+      },
+      'breakout-return': function () {
+        if (typeof showToast === 'function') showToast('Return to main meeting');
+      },
+    };
+
+    // Patch WebSocket onmessage when connectWS runs
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      try {
+        if (typeof ws !== 'undefined' && ws && !ws.__p2handlers) {
+          ws.__p2handlers = true;
+          const prev = ws.onmessage;
+          ws.onmessage = function (ev) {
+            if (typeof prev === 'function') prev.call(this, ev);
+            try {
+              const msg = JSON.parse(ev.data);
+              const h = extraHandlers[msg.type];
+              if (h) h(msg);
+            } catch (_) {}
+          };
+        }
+      } catch (_) {}
+      if (tries > 100) clearInterval(iv);
+    }, 300);
+
+    // Also re-patch after each connect: hook sendWS side is hard; observe currentMeeting
+    const origLeave = leaveMeeting;
+    // leaveMeeting is async function in scope — wrap via reassignment if possible
+    // We call flush from patched leaveMeeting below
+  })();
+
+
+
+
+
+  // ========== Slim rail UI controller (7-slot) ==========
+  (function meetRailUI() {
+    const drawer = document.getElementById('meetSideDrawer');
+    const rail = document.getElementById('meetIconRail');
+    if (!rail) return;
+    let openPanel = null;
+    const dmStore = {}; // targetId -> { name, messages: [], unread }
+
+    function isHostLike() {
+      try {
+        return myRole === 'host' || myRole === 'cohost' || !!(currentMeeting && currentMeeting.isHost);
+      } catch (_) { return false; }
+    }
+
+
+    var chatChannels = {
+      everyone: { id: 'everyone', title: 'Group chat', pinned: true, kind: 'group', messages: [], unread: 0, lastText: '', lastAt: 0, members: [] }
+    };
+    var activeChannelId = null;
+    Object.defineProperty(window, '__meetActiveChannelId', {
+      get: function () { return activeChannelId; },
+      set: function (v) { activeChannelId = v; },
+      configurable: true
+    });
+
+    function applySelfChatColorSafe() {
+      try { if (typeof applySelfChatColor === 'function') applySelfChatColor(); } catch (_) {}
+    }
+
+    function formatChatTime(ts) {
+      if (!ts) return '';
+      try {
+        var d = new Date(typeof ts === 'number' ? ts : Date.parse(ts));
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (_) { return ''; }
+    }
+
+    function msgKey(m) {
+      if (!m) return '';
+      if (m.id) return String(m.id);
+      return [m.fromId || m.participantId || '', m.at || '', m.text || m.body || ''].join('|');
+    }
+
+    function channelHasMsg(ch, m) {
+      if (!ch || !ch.messages) return false;
+      var k = msgKey(m);
+      if (!k) return false;
+      for (var i = 0; i < ch.messages.length; i++) {
+        if (msgKey(ch.messages[i]) === k) return true;
+      }
+      return false;
+    }
+
+    function renderBubbleMessage(m, opts) {
+      opts = opts || {};
+      var selfId = currentMeeting && currentMeeting.participantId;
+      var selfUserId = currentUser && currentUser.id;
+      var isMe = false;
+      if (typeof m.isMe === 'boolean') isMe = m.isMe;
+      else if (m.fromId && selfId && m.fromId === selfId) isMe = true;
+      else if (m.participantId && selfId && m.participantId === selfId) isMe = true;
+      else if (m.fromUserId && selfUserId && m.fromUserId === selfUserId) isMe = true;
+
+      var row = document.createElement('div');
+      row.className = 'chat-msg-row' + (isMe ? ' is-me' : '');
+      row.setAttribute('data-msg-key', msgKey(m));
+      applySelfChatColorSafe();
+      if (isMe) row.style.setProperty('--chat-self-color', (typeof selfChatColor === 'function' ? selfChatColor() : '#4f8cff'));
+
+      var who = isMe ? 'You' : (m.fromName || m.name || 'User');
+      var body = m.text || m.body || '';
+      if (typeof linkifyAndMentions === 'function' && m.mentions) {
+        body = linkifyAndMentions(body, m.mentions);
+      } else {
+        body = (typeof escapeHtml === 'function' ? escapeHtml(body) : body);
+      }
+      var meta = formatChatTime(m.at || m.created_at);
+      row.innerHTML =
+        '<span class="chat-who">' + (typeof escapeHtml === 'function' ? escapeHtml(who) : who) + '</span>' +
+        (body ? '<div class="chat-msg-body">' + body + '</div>' : '') +
+        (meta ? '<div class="chat-msg-meta">' + meta + '</div>' : '');
+      return row;
+    }
+
+    function appendBubbleToBox(box, m, opts) {
+      if (!box || !m) return null;
+      var k = msgKey(m);
+      if (k && box.querySelector('[data-msg-key="' + k.replace(/"/g, '') + '"]')) return null;
+      var row = renderBubbleMessage(m, opts);
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+      return row;
+    }
+
+    function rerenderActiveChannel() {
+      var ch = activeChannelId && chatChannels[activeChannelId];
+      var box = document.getElementById('chatMessages');
+      if (!ch || !box) return;
+      var scrollBottom = Math.abs(box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+      box.innerHTML = '';
+      if (ch.peerIsGuest) {
+        var banner = document.createElement('div');
+        banner.className = 'chat-msg-row guest-label-row';
+        banner.textContent = 'This chat includes a guest — history is kept for your account';
+        box.appendChild(banner);
+      }
+      (ch.messages || []).forEach(function (m) {
+        appendBubbleToBox(box, m, { peerIsGuest: ch.peerIsGuest });
+      });
+      if (scrollBottom) box.scrollTop = box.scrollHeight;
+    }
+
+    function setThreadTitle(title) {
+      var el = document.getElementById('chatThreadTitle');
+      if (el) el.textContent = title || 'Chat';
+    }
+
+    function setMembersBtnVisible(show) {
+      var btn = document.getElementById('chatThreadMembersBtn');
+      if (btn) btn.classList.toggle('hidden', !show);
+      var panel = document.getElementById('chatMembersPanel');
+      if (!show && panel) panel.classList.add('hidden');
+    }
+
+    function renderMembersPanel(ch) {
+      var list = document.getElementById('chatMembersList');
+      var addRow = document.getElementById('chatMembersAddRow');
+      if (!list) return;
+      list.innerHTML = '';
+      var members = (ch && ch.memberDetails) || [];
+      if (!members.length && ch && Array.isArray(ch.members)) {
+        members = ch.members.map(function (id) {
+          var p = (participants || []).find(function (x) { return (x.id || x.participantId) === id; });
+          return { id: id, name: p ? (p.name || id) : id, role: p ? p.role : 'participant' };
+        });
+      }
+      var canManage = isHostLike();
+      members.forEach(function (m) {
+        var li = document.createElement('li');
+        var role = m.role || 'participant';
+        li.innerHTML =
+          '<span><strong>' + escapeHtml(m.name || m.id) + '</strong>' +
+          '<span class="member-role">' + escapeHtml(role) + '</span></span>';
+        if (canManage && ch && ch.kind === 'subgroup' && m.id !== (currentMeeting && currentMeeting.participantId)) {
+          var rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'member-remove';
+          rm.title = 'Remove';
+          rm.innerHTML = '<i class="fa-solid fa-user-minus"></i>';
+          rm.addEventListener('click', function () {
+            if (typeof sendWS === 'function') sendWS({ type: 'group-remove-member', groupId: ch.id, targetId: m.id });
+            ch.members = (ch.members || []).filter(function (id) { return id !== m.id; });
+            ch.memberDetails = (ch.memberDetails || []).filter(function (x) { return x.id !== m.id; });
+            renderMembersPanel(ch);
+          });
+          li.appendChild(rm);
+        }
+        list.appendChild(li);
+      });
+      if (addRow) {
+        addRow.classList.toggle('hidden', !(canManage && ch && ch.kind === 'subgroup'));
+        if (canManage && ch && ch.kind === 'subgroup') {
+          var sel = document.getElementById('chatMembersAddSelect');
+          if (sel) {
+            var prev = sel.value;
+            sel.innerHTML = '<option value="">Add participant…</option>';
+            var existing = {};
+            (ch.members || []).forEach(function (id) { existing[id] = true; });
+            var selfId = currentMeeting && currentMeeting.participantId;
+            (participants || []).forEach(function (p) {
+              var id = p.id || p.participantId;
+              if (!id || id === selfId || existing[id]) return;
+              var opt = document.createElement('option');
+              opt.value = id;
+              opt.textContent = p.name || id;
+              sel.appendChild(opt);
+            });
+            if (prev) sel.value = prev;
+          }
+        }
+      }
+    }
+
+    /** Refresh live-dependent chat UI when roster changes (no page reload). */
+    window.__meetRefreshChatLive = function () {
+      try {
+        var inbox = document.getElementById('chatInbox');
+        if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+        var ch = activeChannelId && chatChannels[activeChannelId];
+        var panel = document.getElementById('chatMembersPanel');
+        if (ch && panel && !panel.classList.contains('hidden')) renderMembersPanel(ch);
+        var ngp = document.getElementById('chatNewGroupPanel');
+        if (ngp && !ngp.classList.contains('hidden')) {
+          var list = document.getElementById('newGroupMemberList');
+          if (list) {
+            var checked = {};
+            list.querySelectorAll('input:checked').forEach(function (i) {
+              checked[i.getAttribute('data-pid')] = true;
+            });
+            list.innerHTML = '';
+            var selfId = currentMeeting && currentMeeting.participantId;
+            (participants || []).forEach(function (p) {
+              var id = p.id || p.participantId;
+              if (!id || id === selfId) return;
+              var li = document.createElement('li');
+              li.innerHTML = '<label><input type="checkbox" data-pid="' + id + '"' +
+                (checked[id] ? ' checked' : '') + '> ' + escapeHtml(p.name || id) + '</label>';
+              list.appendChild(li);
+            });
+          }
+        }
+      } catch (e) { console.warn('[chat live refresh]', e); }
+    };
+
+    function showChatInbox() {
+      var inbox = document.getElementById('chatInbox');
+      var thread = document.getElementById('chatThreadView');
+      var ngp = document.getElementById('chatNewGroupPanel');
+      var panel = document.getElementById('chatMembersPanel');
+      if (inbox) inbox.classList.remove('hidden');
+      if (thread) thread.classList.add('hidden');
+      if (ngp) ngp.classList.add('hidden');
+      if (panel) panel.classList.add('hidden');
+      activeChannelId = null;
+      renderChatInbox();
+      var ng = document.getElementById('chatNewGroupBtn');
+      if (ng) ng.classList.toggle('hidden', !isHostLike());
+    }
+
+    function renderChatInbox() {
+      var list = document.getElementById('chatInboxList');
+      if (!list) return;
+      list.innerHTML = '';
+      var items = Object.keys(chatChannels).map(function (k) { return chatChannels[k]; });
+      items.sort(function (a, b) {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return (b.lastAt || 0) - (a.lastAt || 0);
+      });
+      items.forEach(function (ch) {
+        var li = document.createElement('li');
+        if (ch.pinned) li.classList.add('pinned');
+        var guestBadge = ch.peerIsGuest ? ' <span class="quiet-label">(guest)</span>' : '';
+        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(ch.title) + guestBadge + '</span>' +
+          (ch.unread ? '<span class="dm-unread">' + ch.unread + '</span>' : '') + '</div>' +
+          '<div class="dm-excerpt">' + escapeHtml(String(ch.lastText || '').slice(0, 70)) + '</div>';
+        li.addEventListener('click', function () { openChatChannel(ch.id); });
+        list.appendChild(li);
+      });
+      var selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach(function (p) {
+        var id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        var key = 'dm:' + id;
+        if (chatChannels[key]) return;
+        var li = document.createElement('li');
+        var isGuest = !p.userId;
+        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) +
+          (isGuest ? ' <span class="quiet-label">(guest)</span>' : '') +
+          '</div><div class="dm-excerpt">Message…</div>';
+        li.addEventListener('click', function () {
+          chatChannels[key] = {
+            id: key,
+            title: p.name || id,
+            peerId: id,
+            peerUserId: p.userId || null,
+            peerIsGuest: isGuest,
+            kind: 'dm',
+            messages: [],
+            unread: 0,
+            lastText: '',
+            lastAt: 0
+          };
+          openChatChannel(key);
+        });
+        list.appendChild(li);
+      });
+    }
+
+    async function loadDmHistoryForChannel(ch) {
+      if (!ch || ch.kind !== 'dm' || !ch.peerUserId || !currentUser || !authToken) return;
+      try {
+        var data = await api('/api/dm/with-user?userId=' + encodeURIComponent(ch.peerUserId));
+        if (!data || !Array.isArray(data.messages)) return;
+        ch.threadId = data.threadId;
+        data.messages.forEach(function (m) {
+          var mapped = {
+            id: m.id ? ('db_' + m.id) : undefined,
+            fromName: m.fromName,
+            fromUserId: m.fromUserId,
+            text: m.text,
+            at: m.at,
+            isMe: m.isMe
+          };
+          if (!channelHasMsg(ch, mapped)) ch.messages.push(mapped);
+        });
+        ch.messages.sort(function (a, b) {
+          return (Date.parse(a.at) || a.at || 0) - (Date.parse(b.at) || b.at || 0);
+        });
+        if (ch.messages.length) {
+          var last = ch.messages[ch.messages.length - 1];
+          ch.lastText = last.text || '';
+          ch.lastAt = Date.parse(last.at) || last.at || Date.now();
+        }
+      } catch (e) {
+        console.warn('[dm history]', e);
+      }
+    }
+
+    async function openChatChannel(id) {
+      var ch = chatChannels[id];
+      if (!ch) return;
+      var switching = activeChannelId !== id;
+      activeChannelId = id;
+      ch.unread = 0;
+      var inbox = document.getElementById('chatInbox');
+      var ngp = document.getElementById('chatNewGroupPanel');
+      var view = document.getElementById('chatThreadView');
+      var panel = document.getElementById('chatMembersPanel');
+      if (inbox) inbox.classList.add('hidden');
+      if (ngp) ngp.classList.add('hidden');
+      if (view) view.classList.remove('hidden');
+      if (panel) panel.classList.add('hidden');
+
+      setThreadTitle(ch.title + (ch.peerIsGuest ? ' (guest)' : ''));
+      setMembersBtnVisible(ch.kind === 'subgroup' || ch.kind === 'group');
+
+      if (ch.kind === 'dm' && ch.peerUserId && currentUser) {
+        await loadDmHistoryForChannel(ch);
+      }
+
+      // Always rebuild thread DOM when opening/switching to avoid blank states
+      rerenderActiveChannel();
+      updateChatBadge();
+    }
+
+    function updateChatBadge() {
+      var total = 0;
+      Object.keys(chatChannels).forEach(function (k) { total += chatChannels[k].unread || 0; });
+      var badge = document.getElementById('railChatBadge');
+      if (badge) {
+        badge.textContent = total ? String(total) : '';
+        badge.classList.toggle('hidden', !total);
+      }
+    }
+
+    document.getElementById('chatThreadBack') && document.getElementById('chatThreadBack').addEventListener('click', showChatInbox);
+    document.getElementById('chatThreadMembersBtn') && document.getElementById('chatThreadMembersBtn').addEventListener('click', function () {
+      var ch = chatChannels[activeChannelId];
+      if (!ch) return;
+      var panel = document.getElementById('chatMembersPanel');
+      if (!panel) return;
+      var open = panel.classList.contains('hidden');
+      if (open) {
+        renderMembersPanel(ch);
+        panel.classList.remove('hidden');
+      } else {
+        panel.classList.add('hidden');
+      }
+    });
+    document.getElementById('chatMembersClose') && document.getElementById('chatMembersClose').addEventListener('click', function () {
+      document.getElementById('chatMembersPanel')?.classList.add('hidden');
+    });
+    document.getElementById('chatMembersAddBtn') && document.getElementById('chatMembersAddBtn').addEventListener('click', function () {
+      var ch = chatChannels[activeChannelId];
+      if (!ch || ch.kind !== 'subgroup') return;
+      var sel = document.getElementById('chatMembersAddSelect');
+      var targetId = sel && sel.value;
+      if (!targetId) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'group-add-member', groupId: ch.id, targetId: targetId });
+      if (!ch.members) ch.members = [];
+      if (ch.members.indexOf(targetId) < 0) ch.members.push(targetId);
+      var p = (participants || []).find(function (x) { return (x.id || x.participantId) === targetId; });
+      if (!ch.memberDetails) ch.memberDetails = [];
+      ch.memberDetails.push({ id: targetId, name: p ? p.name : targetId, role: p ? p.role : 'participant' });
+      renderMembersPanel(ch);
+      if (sel) sel.value = '';
+    });
+
+    document.getElementById('chatNewGroupBtn') && document.getElementById('chatNewGroupBtn').addEventListener('click', function () {
+      document.getElementById('chatInbox') && document.getElementById('chatInbox').classList.add('hidden');
+      document.getElementById('chatThreadView') && document.getElementById('chatThreadView').classList.add('hidden');
+      document.getElementById('chatNewGroupPanel') && document.getElementById('chatNewGroupPanel').classList.remove('hidden');
+      var list = document.getElementById('newGroupMemberList');
+      if (!list) return;
+      list.innerHTML = '';
+      var selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach(function (p) {
+        var id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        var li = document.createElement('li');
+        li.innerHTML = '<label><input type="checkbox" data-pid="' + id + '"> ' + escapeHtml(p.name || id) + '</label>';
+        list.appendChild(li);
+      });
+    });
+    document.getElementById('chatNewGroupBack') && document.getElementById('chatNewGroupBack').addEventListener('click', showChatInbox);
+    document.getElementById('newGroupCreateBtn') && document.getElementById('newGroupCreateBtn').addEventListener('click', function () {
+      var name = ((document.getElementById('newGroupName') && document.getElementById('newGroupName').value) || '').trim() || 'Group';
+      var ids = [];
+      document.querySelectorAll('#newGroupMemberList input:checked').forEach(function (i) { ids.push(i.getAttribute('data-pid')); });
+      if (!ids.length) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      if (selfId && ids.indexOf(selfId) < 0) ids.unshift(selfId);
+      var gid = 'grp:' + Date.now();
+      chatChannels[gid] = {
+        id: gid,
+        title: name,
+        members: ids,
+        memberDetails: ids.map(function (id) {
+          var p = (participants || []).find(function (x) { return (x.id || x.participantId) === id; });
+          return { id: id, name: p ? p.name : id, role: p ? p.role : 'participant' };
+        }),
+        kind: 'subgroup',
+        messages: [],
+        unread: 0,
+        lastText: '',
+        lastAt: Date.now()
+      };
+      if (typeof sendWS === 'function') sendWS({ type: 'group-create', groupId: gid, title: name, members: ids });
+      openChatChannel(gid);
+    });
+
+    var chatFormEl = document.getElementById('chatForm');
+    if (chatFormEl && !chatFormEl.__inboxBound) {
+      chatFormEl.__inboxBound = true;
+      chatFormEl.addEventListener('submit', function (e) {
+        if (!activeChannelId || activeChannelId === 'everyone') return;
+        e.preventDefault();
+        e.stopPropagation();
+        var input = document.getElementById('chatInput');
+        var text = (input && input.value || '').trim();
+        if (!text) return;
+        var ch = chatChannels[activeChannelId];
+        if (!ch) return;
+        var selfName = 'Me';
+        try {
+          var me = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
+          if (me) selfName = me.name || 'Me';
+        } catch (_) {}
+        var localId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        if (ch.peerId && typeof sendWS === 'function') {
+          var payload = { type: 'private-chat', targetId: ch.peerId, text: text };
+          if (ch.peerUserId) payload.targetUserId = ch.peerUserId;
+          if (ch.title) payload.targetName = ch.title;
+          sendWS(payload);
+        } else if (ch.kind === 'subgroup' && typeof sendWS === 'function') {
+          sendWS({ type: 'group-chat', groupId: ch.id, text: text, members: ch.members });
+        }
+        // Optimistic UI with local id — server echo will dedupe by text+near-time if needed
+        var msg = {
+          id: localId,
+          fromName: selfName,
+          fromId: currentMeeting && currentMeeting.participantId,
+          fromUserId: currentUser && currentUser.id,
+          text: text,
+          at: Date.now(),
+          isMe: true,
+          _optimistic: true
+        };
+        if (!channelHasMsg(ch, msg)) {
+          ch.messages.push(msg);
+          var box = document.getElementById('chatMessages');
+          if (box) appendBubbleToBox(box, msg);
+        }
+        ch.lastText = text;
+        ch.lastAt = Date.now();
+        if (input) input.value = '';
+      }, true);
+    }
+
+    window.__meetNotePublicChat = function (text, fromName, participantId) {
+      var ch = chatChannels.everyone;
+      var m = {
+        id: 'pub_' + (participantId || '') + '_' + Date.now() + '_' + String(text || '').slice(0, 24),
+        fromName: fromName || '',
+        participantId: participantId,
+        text: text || '',
+        at: Date.now()
+      };
+      // soft dedupe: same sender+text within 2s
+      var softDup = (ch.messages || []).some(function (x) {
+        return x.participantId === participantId && x.text === (text || '') && Math.abs((x.at || 0) - m.at) < 2000;
+      });
+      if (softDup || channelHasMsg(ch, m)) return;
+      ch.lastText = text || '';
+      ch.lastAt = Date.now();
+      ch.messages.push(m);
+      if (activeChannelId !== 'everyone') ch.unread = (ch.unread || 0) + 1;
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+      // DOM for "everyone" is owned by appendChatMessage when that channel is open;
+      // only bubble-append here if appendChatMessage was skipped (active non-everyone already returned early)
+      if (activeChannelId === 'everyone') {
+        // appendChatMessage also writes when everyone is active — skip extra bubble
+      }
+    };
+
+    window.__meetOpenDm = function (id, name, userId) {
+      if (!id) return;
+      var key = 'dm:' + id;
+      if (!chatChannels[key]) {
+        chatChannels[key] = {
+          id: key,
+          title: name || id,
+          peerId: id,
+          peerUserId: userId || null,
+          peerIsGuest: !userId,
+          kind: 'dm',
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      } else {
+        if (name) chatChannels[key].title = name;
+        if (userId) {
+          chatChannels[key].peerUserId = userId;
+          chatChannels[key].peerIsGuest = false;
+        }
+      }
+      // Open chat panel then the exact DM thread
+      try {
+        if (typeof togglePanel === 'function') {
+          if (typeof openPanel !== 'undefined' && openPanel !== 'chat') togglePanel('chat');
+          else if (typeof openPanel === 'undefined') togglePanel('chat');
+        }
+        var chatTab = document.querySelector('.side-tab[data-tab="chat"], .rail-btn[data-panel="chat"]');
+        if (chatTab && typeof chatTab.click === 'function') {
+          // ensure chat surface visible on mobile/desktop
+        }
+        if (typeof window.__meetTogglePanel === 'function') {
+          try { window.__meetTogglePanel('chat'); } catch (_) {}
+        }
+      } catch (_) {}
+      openChatChannel(key);
+    };
+
+    window.__meetIngestPrivate = function (msg) {
+      var m = msg.message || msg;
+      if (!m) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      var selfUserId = currentUser && currentUser.id;
+
+      // Resolve peer — prefer live participant ids; fall back to user ids from DB history
+      var otherId = null;
+      var otherName = null;
+      var otherUserId = null;
+
+      if (m.fromId === selfId) {
+        otherId = m.toId;
+        otherName = m.toName;
+        otherUserId = m.toUserId;
+      } else if (m.toId === selfId) {
+        otherId = m.fromId;
+        otherName = m.fromName;
+        otherUserId = m.fromUserId;
+      } else if (m.fromUserId && selfUserId && m.fromUserId === selfUserId) {
+        otherId = m.toId;
+        otherName = m.toName || m._peerName;
+        otherUserId = m.toUserId || m._peerUserId;
+      } else if (m.toUserId && selfUserId && m.toUserId === selfUserId) {
+        otherId = m.fromId;
+        otherName = m.fromName;
+        otherUserId = m.fromUserId;
+      } else if (m._peerUserId || m._peerName) {
+        otherUserId = m._peerUserId;
+        otherName = m._peerName;
+        otherId = m.fromId === selfId ? m.toId : m.fromId;
+      }
+
+      if (!otherId && otherUserId) {
+        // Find live participant by userId
+        var peer = (participants || []).find(function (p) { return p.userId === otherUserId; });
+        if (peer) otherId = peer.id || peer.participantId;
+        else otherId = 'user:' + otherUserId;
+      }
+      if (!otherId) return;
+
+      var key = 'dm:' + otherId;
+      // Also merge into channel keyed by user if we previously opened via user
+      if (!chatChannels[key] && otherUserId) {
+        var alt = Object.keys(chatChannels).find(function (k) {
+          return chatChannels[k].kind === 'dm' && chatChannels[k].peerUserId === otherUserId;
+        });
+        if (alt) key = alt;
+      }
+
+      if (!chatChannels[key]) {
+        chatChannels[key] = {
+          id: key,
+          title: otherName || otherId,
+          peerId: String(otherId).indexOf('user:') === 0 ? null : otherId,
+          peerUserId: otherUserId || null,
+          peerIsGuest: !otherUserId,
+          kind: 'dm',
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      }
+      // Deduplicate optimistic local messages: same text from me within 15s
+      if (m.id && channelHasMsg(chatChannels[key], m)) return;
+      if (m.fromId === selfId || (m.fromUserId && selfUserId && m.fromUserId === selfUserId)) {
+        var dup = (chatChannels[key].messages || []).some(function (x) {
+          return x._optimistic && x.text === m.text && Math.abs((x.at || 0) - (m.at || Date.now())) < 15000;
+        });
+        if (dup) {
+          // Upgrade optimistic entry with server id
+          for (var i = 0; i < chatChannels[key].messages.length; i++) {
+            var x = chatChannels[key].messages[i];
+            if (x._optimistic && x.text === m.text) {
+              x.id = m.id || x.id;
+              x._optimistic = false;
+              break;
+            }
+          }
+          return;
+        }
+      }
+
+      if (!channelHasMsg(chatChannels[key], m)) {
+        chatChannels[key].messages.push(m);
+      }
+      chatChannels[key].lastText = m.text || '';
+      chatChannels[key].lastAt = m.at || Date.now();
+      if (otherName) chatChannels[key].title = otherName;
+      if (otherUserId) {
+        chatChannels[key].peerUserId = otherUserId;
+        chatChannels[key].peerIsGuest = false;
+      }
+      if (otherId && String(otherId).indexOf('user:') !== 0) {
+        chatChannels[key].peerId = otherId;
+      }
+
+      if (activeChannelId !== key) {
+        chatChannels[key].unread = (chatChannels[key].unread || 0) + 1;
+      } else {
+        var box = document.getElementById('chatMessages');
+        if (box) appendBubbleToBox(box, m);
+      }
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    window.__meetIngestPrivateHistory = function (messages) {
+      if (!Array.isArray(messages)) return;
+      messages.forEach(function (m) {
+        window.__meetIngestPrivate({ message: m });
+      });
+      Object.keys(chatChannels).forEach(function (k) {
+        if (String(k).indexOf('dm:') === 0) chatChannels[k].unread = 0;
+      });
+      updateChatBadge();
+      if (activeChannelId && String(activeChannelId).indexOf('dm:') === 0) {
+        rerenderActiveChannel();
+      }
+    };
+
+    window.__meetIngestGroupState = function (group) {
+      if (!group || !group.id) return;
+      var gid = group.id;
+      if (!chatChannels[gid]) {
+        chatChannels[gid] = {
+          id: gid,
+          title: group.title || 'Group',
+          kind: 'subgroup',
+          members: (group.members || []).map(function (m) { return m.id || m; }),
+          memberDetails: group.members || [],
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      } else {
+        if (group.title) chatChannels[gid].title = group.title;
+        chatChannels[gid].members = (group.members || []).map(function (m) { return m.id || m; });
+        chatChannels[gid].memberDetails = group.members || chatChannels[gid].memberDetails;
+      }
+      if (activeChannelId === gid) {
+        setThreadTitle(chatChannels[gid].title);
+        renderMembersPanel(chatChannels[gid]);
+      }
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    window.__meetIngestGroupChat = function (msg) {
+      var m = msg.message || msg;
+      if (!m || !m.groupId) return;
+      var gid = m.groupId;
+      if (!chatChannels[gid]) {
+        chatChannels[gid] = {
+          id: gid,
+          title: 'Group',
+          kind: 'subgroup',
+          members: [],
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      }
+      // Dedup optimistic
+      if (m.id && channelHasMsg(chatChannels[gid], m)) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      if (m.fromId === selfId) {
+        var dup = (chatChannels[gid].messages || []).some(function (x) {
+          return x._optimistic && x.text === m.text && Math.abs((x.at || 0) - (m.at || Date.now())) < 15000;
+        });
+        if (dup) {
+          for (var i = 0; i < chatChannels[gid].messages.length; i++) {
+            var x = chatChannels[gid].messages[i];
+            if (x._optimistic && x.text === m.text) {
+              x.id = m.id || x.id;
+              x._optimistic = false;
+              break;
+            }
+          }
+          return;
+        }
+      }
+      if (!channelHasMsg(chatChannels[gid], m)) chatChannels[gid].messages.push(m);
+      chatChannels[gid].lastText = m.text || '';
+      chatChannels[gid].lastAt = m.at || Date.now();
+      if (activeChannelId !== gid) chatChannels[gid].unread = (chatChannels[gid].unread || 0) + 1;
+      else {
+        var box = document.getElementById('chatMessages');
+        if (box) appendBubbleToBox(box, m);
+      }
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    // Lightweight keep-alive: if active thread DOM was wiped, rebuild from channel state
+    setInterval(function () {
+      try {
+        if (!activeChannelId) return;
+        var box = document.getElementById('chatMessages');
+        var ch = chatChannels[activeChannelId];
+        if (!box || !ch) return;
+        var view = document.getElementById('chatThreadView');
+        if (view && view.classList.contains('hidden')) return;
+        if ((ch.messages || []).length > 0 && box.children.length === 0) {
+          rerenderActiveChannel();
+        }
+      } catch (_) {}
+    }, 2000);
+
+    var stageChatTop = document.getElementById('stageChatBtnTop');
+    if (stageChatTop) stageChatTop.addEventListener('click', function () { togglePanel('chat'); });
+    var stageRec = document.getElementById('stageRecordBtn');
+    if (stageRec) stageRec.addEventListener('click', function () {
+      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) return;
+      var m = document.getElementById('recordModal');
+      if (m) m.classList.remove('hidden');
+    });
+
+
+    function showTab(name) {
+      document.querySelectorAll('.side-tab-panel').forEach(function (p) {
+        var match = p.getAttribute('data-tab') === name || p.id === name + 'Tab';
+        if (match) {
+          p.classList.remove('hidden');
+          p.classList.add('active');
+          p.style.display = 'flex';
+        } else {
+          p.classList.add('hidden');
+          p.classList.remove('active');
+          p.style.display = 'none';
+        }
+      });
+      function bindClick(id, fn) {
+        var el = document.getElementById(id);
+        if (el) el.onclick = fn;
+      }
+      if (name === 'security') {
+        var mount = document.getElementById('securityPanelMount');
+        var src = document.getElementById('dynPaneSecurity');
+        if (mount && src && !mount.dataset.filled) {
+          mount.innerHTML = src.innerHTML;
+          mount.dataset.filled = '1';
+        }
+      }
+      if (name === 'more') {
+        var mount2 = document.getElementById('morePanelMount');
+        var src2 = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
+        if (mount2 && src2 && !mount2.dataset.filled) {
+          mount2.innerHTML = src2.innerHTML;
+          mount2.dataset.filled = '1';
+        }
+      }
+      if (name === 'media') {
+        try { refreshMicDevices(); } catch (_) {}
+        bindClick('mediaMicToggle', function () { if (typeof toggleMic === 'function') toggleMic(); });
+        bindClick('mediaShareBtn', function () { var s = document.getElementById('shareBtn'); if (s) s.click(); });
+        bindClick('mediaRecordBtn', function () { var m = document.getElementById('recordModal'); if (m) m.classList.remove('hidden'); });
+        // Collaboration / media tools (moved from More)
+        document.querySelectorAll('#mediaTab .more-item[data-action]').forEach(function (btn) {
+          btn.onclick = function (e) {
+            e.preventDefault();
+            var act = btn.getAttribute('data-action');
+            if (act === 'pip' && window.__meetRequestPiP) window.__meetRequestPiP();
+            else if (act === 'blur' && window.__meetToggleBlur) window.__meetToggleBlur();
+            else if (act === 'whiteboard' && window.__meetOpenWhiteboard) window.__meetOpenWhiteboard();
+            else if (act === 'breakout' && window.__meetOpenBreakout) window.__meetOpenBreakout();
+            else if (act === 'notes') {
+              try {
+                if (typeof togglePanel === 'function') togglePanel('notes');
+                else document.querySelector('.rail-btn[data-panel="notes"]')?.click();
+              } catch (_) {}
+            }
+          };
+        });
+        // Wire media timeline controls to existing timeline handlers if present
+        try {
+          var ss = document.getElementById('stSlideshowToggleMedia');
+          var ssMain = document.getElementById('stSlideshowToggle') || document.getElementById('stSlideshowToggleSide') || document.getElementById('stSlideshowToggleDesktop');
+          if (ss && ssMain && !ss.__bound) {
+            ss.__bound = true;
+            ss.checked = !!ssMain.checked;
+            ss.addEventListener('change', function () { ssMain.checked = ss.checked; ssMain.dispatchEvent(new Event('change')); });
+          }
+          var addM = document.getElementById('stAddImagesBtnMedia');
+          var addMain = document.getElementById('stAddImagesBtn') || document.getElementById('stAddImagesBtnSide') || document.getElementById('stAddImagesBtnDesktop');
+          if (addM && addMain && !addM.__bound) {
+            addM.__bound = true;
+            addM.addEventListener('click', function () { addMain.click(); });
+          }
+          // Show host actions if visible elsewhere
+          var actM = document.getElementById('stActionsMedia');
+          var actMain = document.getElementById('stActionsSide') || document.getElementById('stActionsDesktop') || document.getElementById('stActions');
+          if (actM && actMain) actM.classList.toggle('hidden', actMain.classList.contains('hidden'));
+        } catch (_) {}
+      }
+      if (name === 'screenshare') {
+        bindClick('sideShareScreenBtn', function () {
+          var s = document.getElementById('shareBtn');
+          if (s) s.click();
+        });
+        try { if (typeof renderCards === 'function') renderCards(); } catch (_) {}
+        try { mirrorScreenCardsToSide(); } catch (_) {}
+        // Keep share label in sync
+        try {
+          var lbl = document.getElementById('sideShareScreenLabel');
+          if (lbl) lbl.textContent = (typeof isSharing !== 'undefined' && isSharing) ? 'Stop sharing' : 'Share screen';
+        } catch (_) {}
+      }
+      if (name === 'room') {
+        try { refreshRoomRaised(); } catch (_) {}
+        bindClick('roomCopyLinkBtn', function () {
+          var box = document.getElementById('roomLinkBox');
+          var inp = document.getElementById('roomLinkInput');
+          var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+          if (inp) inp.value = link;
+          if (box) box.classList.remove('hidden');
+          try { navigator.clipboard.writeText(link); } catch (_) {}
+        });
+        bindClick('roomHandBtn', function () {
+          var h = document.getElementById('handBtn') || document.getElementById('raiseHandBtn');
+          if (h) h.click();
+        });
+        bindClick('roomMuteAllBtn', function () { muteAll(); });
+        document.querySelectorAll('#roomTab .rail-open-panel').forEach(function (b) {
+          b.onclick = function () {
+            var g = b.getAttribute('data-goto');
+            if (g) { openPanel = null; togglePanel(g); }
+          };
+        });
+      }
+      if (name === 'account') {
+        bindClick('accThemeBtn', function () { var e = document.getElementById('themeToggle'); if (e) e.click(); });
+        bindClick('accHistoryBtn', function () { var e = document.getElementById('historyBtn'); if (e) e.click(); });
+        bindClick('accAuthBtn', function () {
+          var a = document.getElementById('loginBtn') || document.getElementById('logoutBtn');
+          if (a) a.click();
+        });
+        bindClick('accLeaveBtn', function () {
+          if (typeof leaveMeeting === 'function') leaveMeeting();
+          else { var e = document.getElementById('leaveBtn'); if (e) e.click(); }
+        });
+        bindClick('accEndBtn', function () { var e = document.getElementById('endMeetBtn'); if (e) e.click(); });
+      }
+      if (name === 'chat') {
+        if (typeof showChatInbox === 'function') showChatInbox();
+      }
+      if (name === 'notifications') {
+        try { if (typeof renderNotifications === 'function') renderNotifications(); } catch (_) {}
+      }
+      if (['people', 'notifications', 'notes', 'timeline'].indexOf(name) >= 0) {
+        var legacy = document.querySelector('.side-tab[data-tab="' + name + '"]');
+        if (legacy) { try { legacy.click(); } catch (_) {} }
+      }
+    }
+
+    function togglePanel(name) {
+      if (!drawer) {
+        console.warn('[meet] meetSideDrawer missing');
+        return;
+      }
+      if (openPanel === name) {
+        drawer.classList.add('hidden');
+        drawer.style.display = 'none';
+        openPanel = null;
+        rail.querySelectorAll('.rail-btn.active').forEach(function (b) { b.classList.remove('active'); });
+        return;
+      }
+      openPanel = name;
+      drawer.classList.remove('hidden');
+      drawer.style.display = 'flex';
+      drawer.style.width = '300px';
+      drawer.style.minWidth = '240px';
+      drawer.style.visibility = 'visible';
+      drawer.style.opacity = '1';
+      rail.querySelectorAll('.rail-btn.active').forEach(function (b) { b.classList.remove('active'); });
+      var activeBtn = rail.querySelector('.rail-btn[data-panel="' + name + '"]');
+      if (activeBtn) activeBtn.classList.add('active');
+      showTab(name);
+      // Re-assert drawer after showTab (legacy tab clicks can fight us)
+      drawer.classList.remove('hidden');
+      drawer.style.display = 'flex';
+      console.log('[meet] opened panel', name, 'drawerHidden', drawer.classList.contains('hidden'));
+    }
+    window.__meetTogglePanel = togglePanel;
+
+    rail.querySelectorAll('.rail-btn.rail-panel').forEach((btn) => {
+      btn.addEventListener('click', () => togglePanel(btn.getAttribute('data-panel')));
+    });
+
+    // Account / media / room buttons
+    document.getElementById('accThemeBtn')?.addEventListener('click', () => document.getElementById('themeToggle')?.click());
+    document.getElementById('accHistoryBtn')?.addEventListener('click', () => document.getElementById('historyBtn')?.click());
+    document.getElementById('accAuthBtn')?.addEventListener('click', () => {
+      document.getElementById('loginBtn')?.click() || document.getElementById('logoutBtn')?.click();
+    });
+    document.getElementById('accLeaveBtn')?.addEventListener('click', () => {
+      if (typeof leaveMeeting === 'function') leaveMeeting();
+      else document.getElementById('leaveBtn')?.click();
+    });
+    document.getElementById('accEndBtn')?.addEventListener('click', () => document.getElementById('endMeetBtn')?.click());
+    document.getElementById('mediaMicToggle')?.addEventListener('click', () => {
+      if (typeof toggleMic === 'function') toggleMic();
+    });
+    document.getElementById('mediaShareBtn')?.addEventListener('click', () => document.getElementById('shareBtn')?.click());
+    document.getElementById('mediaRecordBtn')?.addEventListener('click', () => {
+      document.getElementById('recordModal')?.classList.remove('hidden');
+    });
+    document.getElementById('roomCopyLinkBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('roomLinkBox');
+      const inp = document.getElementById('roomLinkInput');
+      const link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+      if (inp) inp.value = link;
+      if (box) box.classList.remove('hidden');
+      try { navigator.clipboard.writeText(link); if (typeof showToast === 'function') showToast('Link copied'); } catch (_) {}
+    });
+    document.getElementById('roomLinkCopy')?.addEventListener('click', () => {
+      const inp = document.getElementById('roomLinkInput');
+      if (inp) { try { navigator.clipboard.writeText(inp.value); if (typeof showToast === 'function') showToast('Copied'); } catch (_) {} }
+    });
+    document.getElementById('roomHandBtn')?.addEventListener('click', () => {
+      document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
+      refreshRoomRaised();
+    });
+    document.getElementById('roomMuteAllBtn')?.addEventListener('click', muteAll);
+    document.getElementById('peopleMuteAllBtn')?.addEventListener('click', muteAll);
+    document.querySelectorAll('.rail-open-panel').forEach((b) => {
+      b.addEventListener('click', () => {
+        const g = b.getAttribute('data-goto');
+        if (g) { openPanel = null; togglePanel(g); }
+      });
+    });
+
+    function muteAll() {
+      if (!isHostLike()) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'mute-all' });
+      if (typeof showToast === 'function') showToast('Mute all sent');
+    }
+
+    async function refreshMicDevices() {
+      const sel = document.getElementById('micDeviceSelect');
+      if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === 'audioinput');
+        const cur = sel.value;
+        sel.innerHTML = '';
+        mics.forEach((d) => {
+          const o = document.createElement('option');
+          o.value = d.deviceId;
+          o.textContent = d.label || 'Microphone';
+          sel.appendChild(o);
+        });
+        if (cur) sel.value = cur;
+      } catch (_) {}
+    }
+    document.getElementById('micDeviceSelect')?.addEventListener('change', async (e) => {
+      const id = e.target.value;
+      try {
+        if (room?.localParticipant && id) {
+          // LiveKit switch device if API available
+          if (typeof room.switchActiveDevice === 'function') {
+            await room.switchActiveDevice('audioinput', id);
+          }
+        }
+      } catch (err) { console.warn(err); }
+    });
+
+    function refreshRoomRaised() {
+      const list = document.getElementById('roomRaisedList');
+      if (!list) return;
+      list.innerHTML = '';
+      (participants || []).filter((p) => p.handRaised).forEach((p) => {
+        const li = document.createElement('li');
+        li.textContent = p.name || p.id;
+        list.appendChild(li);
+      });
+    }
+
+    // Chat modes group / dm
+    function setChatMode(mode) {
+      window.__railChatMode = mode;
+      document.getElementById('chatSubGroup')?.classList.toggle('active', mode === 'group');
+      document.getElementById('chatSubDm')?.classList.toggle('active', mode === 'dm');
+      const groupBox = document.getElementById('sideChat');
+      const dmHome = document.getElementById('dmHome');
+      const dmThread = document.getElementById('dmThread');
+      const form = document.getElementById('chatForm');
+      if (mode === 'group') {
+        if (groupBox) groupBox.classList.remove('hidden');
+        // show group messages area
+        document.getElementById('chatMessages')?.classList.remove('hidden');
+        if (form) form.classList.remove('hidden');
+        if (dmHome) dmHome.classList.add('hidden');
+        if (dmThread) dmThread.classList.add('hidden');
+      } else {
+        document.getElementById('chatMessages')?.classList.add('hidden');
+        if (form) form.classList.add('hidden');
+        if (dmHome) dmHome.classList.remove('hidden');
+        if (dmThread) dmThread.classList.add('hidden');
+        renderDmHome();
+      }
+    }
+    document.getElementById('chatSubGroup')?.addEventListener('click', () => setChatMode('group'));
+    document.getElementById('chatSubDm')?.addEventListener('click', () => setChatMode('dm'));
+
+    function renderDmHome() {
+      const conv = document.getElementById('dmConversationList');
+      const people = document.getElementById('dmPeopleList');
+      if (!conv || !people) return;
+      conv.innerHTML = '';
+      people.innerHTML = '';
+      const threads = Object.keys(dmStore).map((id) => ({ id, ...dmStore[id] }))
+        .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+      threads.forEach((th) => {
+        const li = document.createElement('li');
+        const last = (th.messages && th.messages[th.messages.length - 1]) || {};
+        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(th.name || th.id) + '</span>' +
+          (th.unread ? '<span class="dm-unread">' + th.unread + '</span>' : '') + '</div>' +
+          '<div class="dm-excerpt">' + escapeHtml(String(last.text || '').slice(0, 60)) + '</div>';
+        li.addEventListener('click', () => openDmThread(th.id, th.name));
+        conv.appendChild(li);
+      });
+      const selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach((p) => {
+        const id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        if (dmStore[id]) return; // already in conversations
+        const li = document.createElement('li');
+        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) + '</div>';
+        li.addEventListener('click', () => openDmThread(id, p.name));
+        people.appendChild(li);
+      });
+    }
+
+    function openDmThread(id, name) {
+      if (!dmStore[id]) dmStore[id] = { name: name || id, messages: [], unread: 0, lastAt: Date.now() };
+      dmStore[id].unread = 0;
+      dmStore[id].name = name || dmStore[id].name;
+      window.__dmTargetId = id;
+      document.getElementById('dmHome')?.classList.add('hidden');
+      const thread = document.getElementById('dmThread');
+      if (thread) thread.classList.remove('hidden');
+      const box = document.getElementById('dmThreadMessages');
+      if (box) {
+        box.innerHTML = '';
+        (dmStore[id].messages || []).forEach((m) => {
+          const el = document.createElement('div');
+          el.className = 'chat-msg';
+          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
+          box.appendChild(el);
+        });
+        box.scrollTop = box.scrollHeight;
+      }
+      // ensure chat panel open
+      if (openPanel !== 'chat') togglePanel('chat');
+      setChatMode('dm');
+      document.getElementById('dmHome')?.classList.add('hidden');
+      document.getElementById('dmThread')?.classList.remove('hidden');
+    }
+    window.__meetOpenDm = function (id, name) {
+      if (openPanel !== 'chat') togglePanel('chat');
+      setChatMode('dm');
+      openDmThread(id, name);
+    };
+    document.getElementById('dmBackBtn')?.addEventListener('click', () => {
+      document.getElementById('dmThread')?.classList.add('hidden');
+      document.getElementById('dmHome')?.classList.remove('hidden');
+      window.__dmTargetId = null;
+      renderDmHome();
+    });
+    document.getElementById('dmForm')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('dmInput');
+      const text = (input && input.value || '').trim();
+      const targetId = window.__dmTargetId;
+      if (!text || !targetId) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'private-chat', targetId, text });
+      // optimistic
+      const selfName = (participants || []).find((p) => p.id === currentMeeting?.participantId)?.name || 'You';
+      const msg = { fromId: currentMeeting?.participantId, fromName: selfName, text, at: Date.now() };
+      if (!dmStore[targetId]) dmStore[targetId] = { name: '', messages: [], unread: 0 };
+      dmStore[targetId].messages.push(msg);
+      dmStore[targetId].lastAt = Date.now();
+      if (input) input.value = '';
+      openDmThread(targetId, dmStore[targetId].name);
+    });
+
+    // Stage footer
+    let hideTimer = null;
+    const stage = document.getElementById('bigView') || document.querySelector('.big-view') || document.getElementById('col2');
+    const footer = document.getElementById('stageHoverChrome');
+    function showFooter() {
+      if (!footer) return;
+      footer.classList.remove('hidden');
+      footer.classList.add('visible');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => footer.classList.remove('visible'), 2200);
+    }
+    if (stage) {
+      stage.addEventListener('mousemove', showFooter);
+      stage.addEventListener('mouseleave', () => {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => footer?.classList.remove('visible'), 400);
+      });
+    }
+    let lastRxClick = 0;
+    document.getElementById('stageReactRow')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.emoji-btn');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.id === 'stageHandBtn') {
+        document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
+        return;
+      }
+      if (btn.id === 'stageMicBtn') {
+        if (typeof toggleMic === 'function') toggleMic();
+        return;
+      }
+      if (btn.id === 'stageFsBtn') {
+        document.getElementById('fullscreenBtn')?.click();
+        return;
+      }
+      const emoji = btn.getAttribute('data-emoji');
+      if (!emoji) return;
+      const now = Date.now();
+      if (now - lastRxClick < 350) return;
+      lastRxClick = now;
+      if (typeof sendWS === 'function') {
+        sendWS({
+          type: 'reaction',
+          emoji,
+          fromName: (participants || []).find((p) => p.id === currentMeeting?.participantId)?.name || currentMeeting?.name || 'Me',
+        });
+      }
+    });
+
+    // Circles only for active shares
+    function initials(name) {
+      const s = String(name || '?').trim();
+      const parts = s.split(/\s+/);
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+      return s.slice(0, 2).toUpperCase();
+    }
+    function refreshStageCards() {
+      const cluster = document.getElementById('stageCardsCluster');
+      if (!cluster) return;
+      cluster.innerHTML = '';
+      const sharers = (participants || []).filter((p) => p.sharing);
+      // also DOM live cards
+      document.querySelectorAll('#screenCards .screen-card.live, #screenCards [data-sharing="1"]').forEach((c) => {
+        const name = c.getAttribute('data-name') || c.textContent;
+        if (name && !sharers.find((s) => s.name === name)) sharers.push({ name, sharing: true, el: c });
+      });
+      sharers.forEach((it, idx) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'stage-card-circle live' + (idx > 2 ? ' stage-card-extra' : '');
+        b.textContent = initials(it.name);
+        b.title = it.name || '';
+        b.addEventListener('click', () => { try { it.el?.click(); } catch (_) {} });
+        cluster.appendChild(b);
+      });
+      // idle background vs share
+      const big = document.getElementById('bigView') || document.querySelector('.big-view');
+      if (big) big.classList.toggle('has-active-share', sharers.length > 0);
+    }
+    setInterval(refreshStageCards, 1500);
+
+    // Talking wavelength via LiveKit audio levels when available
+    setInterval(() => {
+      try {
+        if (!room) return;
+        const parts = room.remoteParticipants ? [...room.remoteParticipants.values()] : [];
+        if (room.localParticipant) parts.push(room.localParticipant);
+        parts.forEach((lp) => {
+          const id = lp.identity || lp.sid;
+          let speaking = false;
+          try {
+            if (typeof lp.isSpeaking === 'boolean') speaking = lp.isSpeaking;
+            else if (lp.audioLevel != null) speaking = lp.audioLevel > 0.05;
+          } catch (_) {}
+          // match participant list by name/identity
+          document.querySelectorAll('[data-wave-for]').forEach((w) => {
+            const pid = w.getAttribute('data-wave-for');
+            const p = (participants || []).find((x) => x.id === pid);
+            if (!p) return;
+            const match = p.id === id || p.name === lp.name || (lp.identity && String(lp.identity).includes(p.id));
+            if (match) w.classList.toggle('hidden', !speaking);
+          });
+        });
+      } catch (_) {}
+    }, 200);
+
+    // Legacy dmStore bridge — prefer the premium channel inbox (__meetIngestPrivate
+    // is defined earlier in the chatChannels block; only fill gaps for old UI).
+    if (typeof window.__meetIngestPrivate !== 'function') {
+      window.__meetIngestPrivate = function (msg) {
+        const m = msg.message || msg;
+        if (!m) return;
+        const selfId = currentMeeting && currentMeeting.participantId;
+        const otherId = m.fromId === selfId ? m.toId : m.fromId;
+        const otherName = m.fromId === selfId ? m.toName : m.fromName;
+        if (!otherId) return;
+        if (!dmStore[otherId]) dmStore[otherId] = { name: otherName || otherId, messages: [], unread: 0 };
+        dmStore[otherId].messages.push(m);
+        dmStore[otherId].lastAt = m.at || Date.now();
+        dmStore[otherId].name = otherName || dmStore[otherId].name;
+        if (window.__dmTargetId !== otherId) dmStore[otherId].unread = (dmStore[otherId].unread || 0) + 1;
+        else if (typeof openDmThread === 'function') openDmThread(otherId, dmStore[otherId].name);
+        const badge = document.getElementById('railChatBadge');
+        if (badge) {
+          const total = Object.values(dmStore).reduce((s, th) => s + (th.unread || 0), 0);
+          badge.textContent = total ? String(total) : '';
+          badge.classList.toggle('hidden', !total);
+        }
+        if (window.__railChatMode === 'dm' && window.__dmTargetId !== otherId && typeof renderDmHome === 'function') renderDmHome();
+      };
+    }
+
+    // Notifications badge on people? use rail - sync notif into list when events happen
+    // Bridge: patch addNotification to also update a rail badge if we add notifications slot under room
+    const _add = window.__meetAddNotification;
+    // ensure join/hand notifs still work - open people/notifications via room
+    setInterval(() => {
+      try {
+        const end = document.getElementById('accEndBtn');
+        const muteAll = document.getElementById('roomMuteAllBtn');
+        const muteAll2 = document.getElementById('peopleMuteAllBtn');
+        const show = isHostLike();
+        if (end) end.classList.toggle('hidden', !show);
+        if (muteAll) muteAll.classList.toggle('hidden', !show);
+        if (muteAll2) muteAll2.classList.toggle('hidden', !show);
+        const n = Array.isArray(participants) ? participants.length : 0;
+        const b = document.getElementById('railPeopleBadge');
+        if (b) b.textContent = String(n || '');
+      } catch (_) {}
+    }, 1200);
+
+    // Artifact modes
+    try {
+      const path = location.pathname;
+      const params = new URLSearchParams(location.search);
+      if (path.match(/^\/m\/[^/]+\/[^/]+/)) document.body.classList.add('artifact-readonly');
+      if (params.get('restart') === '1') document.body.classList.add('artifact-restarted');
+    } catch (_) {}
+
+    // Strengthen chat: single form submit path, prevent double
+    const chatForm = document.getElementById('chatForm');
+    if (chatForm && !chatForm.__railBound) {
+      chatForm.__railBound = true;
+      chatForm.addEventListener('submit', (e) => {
+        // if DM mode somehow, ignore group send
+        if (window.__railChatMode === 'dm') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+    }
+
+    // Recording mini
+    setInterval(() => {
+      const mini = document.getElementById('recMiniControls');
+      if (!mini) return;
+      const active = recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused');
+      if (mini) mini.classList.remove('hidden');
+      const pauseBtn = document.getElementById('recPauseBtn');
+      const stopWrap = mini && mini.querySelector('.rec-mini-hover');
+      const recDot = document.getElementById('stageRecordBtn');
+      if (pauseBtn) {
+        pauseBtn.classList.toggle('hidden', !active);
+        if (active && recordingState) {
+          pauseBtn.innerHTML = recordingState.status === 'paused'
+            ? '<i class="fa-solid fa-play"></i>'
+            : '<i class="fa-solid fa-pause"></i>';
+        }
+      }
+      if (recDot) recDot.classList.toggle('hidden', !!active);
+    }, 500);
+  })();
+
+  // private-chat delivered via extraHandlers only (no duplicate onmessage hook)
+
+
+
+
+
+  document.getElementById('peopleNotifBtn')?.addEventListener('click', () => {
+    if (typeof window.__meetTogglePanel === 'function') window.__meetTogglePanel('notifications');
+    else {
+      document.querySelector('.side-tab[data-tab="notifications"]')?.click();
+      document.getElementById('meetSideDrawer')?.classList.remove('hidden');
+    }
+  });
 
 })();

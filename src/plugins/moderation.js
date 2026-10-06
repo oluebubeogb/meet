@@ -93,7 +93,7 @@ module.exports = {
     });
 
     // ----- Role changes -----
-    ctx.onWs('set-role', ({ msg, participantId, meeting, meetingCode }) => {
+    ctx.onWs('set-role', async ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || !can(meeting, actor, 'manageRoles')) return;
       const targetId = msg.targetId;
@@ -106,7 +106,7 @@ module.exports = {
       target.isHost = false;
       try {
         if (ctx.db) {
-          ctx.db.upsertMembership({
+          await ctx.db.upsertMembership({
             code: meetingCode,
             userId: target.userId,
             participantId: targetId,
@@ -147,7 +147,7 @@ module.exports = {
     });
 
     // ----- Remove -----
-    ctx.onWs('remove-participant', ({ msg, participantId, meeting, meetingCode }) => {
+    ctx.onWs('remove-participant', async ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || !can(meeting, actor, 'removePeople')) return;
       const targetId = msg.targetId;
@@ -161,7 +161,7 @@ module.exports = {
       blockParticipant(meeting, target, { preventRejoin });
       try {
         if (ctx.db) {
-          ctx.db.setMembershipStatus(meetingCode, {
+          await ctx.db.setMembershipStatus(meetingCode, {
             userId: target.userId,
             participantId: targetId,
             status: preventRejoin ? 'BLOCKED' : 'REMOVED',
@@ -380,5 +380,39 @@ module.exports = {
       });
       emitRoster(meetingCode, meeting);
     });
+
+    ctx.onWs('set-max-participants', ({ msg, participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || actor.role !== 'host') return;
+      const max = Math.min(100, Math.max(2, parseInt(msg.max || 20, 10)));
+      if (!meeting.settings) meeting.settings = {};
+      meeting.settings.maxParticipants = max;
+      meeting.maxParticipants = max;
+      broadcast(meetingCode, { type: 'toast', message: 'Participant limit set to ' + max });
+      broadcast(meetingCode, { type: 'security-state', security: { maxParticipants: max } });
+    });
+
+
+    ctx.onWs('mute-all', ({ participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || (actor.role !== 'host' && actor.role !== 'cohost')) return;
+      const { broadcast, sendToParticipant } = ctx;
+      for (const [pid, p] of meeting.participants) {
+        if (pid === participantId) continue;
+        if (p.status !== 'ACTIVE') continue;
+        if (p.role === 'host') continue;
+        p.mutedByHost = true;
+        sendToParticipant(pid, {
+          type: 'force-mute',
+          byName: actor.name,
+          byId: participantId,
+        });
+      }
+      broadcast(meetingCode, { type: 'toast', message: 'Everyone muted by ' + (actor.name || 'host') });
+      if (ctx.logActivity) {
+        try { ctx.logActivity(meeting, 'mute_all', actor); } catch (_) {}
+      }
+    });
+
   },
 };

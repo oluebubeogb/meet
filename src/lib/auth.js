@@ -18,20 +18,20 @@ function niceDisplayName({ displayName, username, email, accountsId }) {
   return 'User';
 }
 
-function ensureAccountsUser({ accountsId, email, username, displayName }) {
+async function ensureAccountsUser({ accountsId, email, username, displayName }) {
   const id = String(accountsId || '').trim();
   const em = (email && String(email).trim().toLowerCase()) || (id ? id + '@accounts.local' : null);
   const pretty = niceDisplayName({ displayName, username, email: em, accountsId: id });
 
   let user = null;
   if (em && !em.endsWith('@accounts.local')) {
-    try { user = db.getUserByEmail(em); } catch (_) {}
+    try { user = await db.getUserByEmail(em); } catch (_) {}
   }
   if (!user && id) {
-    try { user = db.getUserByUsername('accounts:' + id); } catch (_) {}
+    try { user = await db.getUserByUsername('accounts:' + id); } catch (_) {}
   }
   if (!user && username && !isInternalUsername(username)) {
-    try { user = db.getUserByUsername(username); } catch (_) {}
+    try { user = await db.getUserByUsername(username); } catch (_) {}
   }
 
   if (user) {
@@ -52,7 +52,7 @@ function ensureAccountsUser({ accountsId, email, username, displayName }) {
   const uname = ('u' + id.replace(/-/g, '').slice(0, 8) + '_' + base).slice(0, 40).toLowerCase();
 
   try {
-    const created = db.createUser({
+    const created = await db.createUser({
       username: uname,
       email: em || (id + '@accounts.local'),
       passwordHash: bcrypt.hashSync('accounts-sso-' + id, 8),
@@ -67,9 +67,9 @@ function ensureAccountsUser({ accountsId, email, username, displayName }) {
     };
   } catch (e) {
     user = null;
-    try { user = db.getUserByEmail(em); } catch (_) {}
+    try { user = await db.getUserByEmail(em); } catch (_) {}
     if (!user) {
-      try { user = db.getUserByUsername(uname); } catch (_) {}
+      try { user = await db.getUserByUsername(uname); } catch (_) {}
     }
     if (user) {
       return {
@@ -100,7 +100,7 @@ async function getAuthUser(req) {
   try {
     const payload = jwt.verify(token, config.JWT_SECRET);
     if (payload && payload.sub != null && payload.type !== 'access') {
-      const user = db.getUserById(payload.sub);
+      const user = await db.getUserById(payload.sub);
       if (user) return { ...user, source: 'meet' };
     }
   } catch (_) {}
@@ -117,7 +117,7 @@ async function getAuthUser(req) {
             if (res.ok) {
               const data = await res.json();
               const u = data.user || data;
-              return ensureAccountsUser({
+              return await ensureAccountsUser({
                 accountsId: String(u.id || payload.sub),
                 email: u.email || payload.email || null,
                 username: u.username || null,
@@ -126,7 +126,7 @@ async function getAuthUser(req) {
             }
           } catch (_) {}
         }
-        return ensureAccountsUser({
+        return await ensureAccountsUser({
           accountsId: String(payload.sub),
           email: payload.email || null,
           username: payload.username || payload.display_name || null,
@@ -145,7 +145,7 @@ async function getAuthUser(req) {
         const data = await res.json();
         const u = data.user || data;
         if (u && (u.id || u.email)) {
-          return ensureAccountsUser({
+          return await ensureAccountsUser({
             accountsId: String(u.id),
             email: u.email || null,
             username: u.username || null,
