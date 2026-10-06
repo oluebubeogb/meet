@@ -8053,18 +8053,32 @@
     }
 
     function togglePanel(name) {
-      if (!drawer) return;
+      if (!drawer) {
+        console.warn('[meet] meetSideDrawer missing');
+        return;
+      }
       if (openPanel === name) {
         drawer.classList.add('hidden');
+        drawer.style.display = 'none';
         openPanel = null;
-        rail.querySelectorAll('.rail-btn.active').forEach((b) => b.classList.remove('active'));
+        rail.querySelectorAll('.rail-btn.active').forEach(function (b) { b.classList.remove('active'); });
         return;
       }
       openPanel = name;
       drawer.classList.remove('hidden');
-      rail.querySelectorAll('.rail-btn.active').forEach((b) => b.classList.remove('active'));
-      rail.querySelector('.rail-btn[data-panel="' + name + '"]')?.classList.add('active');
+      drawer.style.display = 'flex';
+      drawer.style.width = '300px';
+      drawer.style.minWidth = '240px';
+      drawer.style.visibility = 'visible';
+      drawer.style.opacity = '1';
+      rail.querySelectorAll('.rail-btn.active').forEach(function (b) { b.classList.remove('active'); });
+      var activeBtn = rail.querySelector('.rail-btn[data-panel="' + name + '"]');
+      if (activeBtn) activeBtn.classList.add('active');
       showTab(name);
+      // Re-assert drawer after showTab (legacy tab clicks can fight us)
+      drawer.classList.remove('hidden');
+      drawer.style.display = 'flex';
+      console.log('[meet] opened panel', name, 'drawerHidden', drawer.classList.contains('hidden'));
     }
     window.__meetTogglePanel = togglePanel;
 

@@ -6447,3 +6447,19 @@ html.dark .stage-chrome-btn { background: rgba(255,255,255,0.08); }
   font-size: 0.95rem;
   color: inherit;
 }
+
+/* Ensure Col2 drawer is visible when not .hidden */
+#meetingView.meet-rail-layout #meetSideDrawer:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 300px !important;
+  min-width: 240px !important;
+  max-width: 36vw !important;
+  height: 100% !important;
+  overflow: auto !important;
+  z-index: 25 !important;
+}
+#meetingView.meet-rail-layout #meetSideDrawer.hidden {
+  display: none !important;
+}
