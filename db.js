@@ -175,7 +175,6 @@ async function initPg() {
       );
       CREATE INDEX IF NOT EXISTS idx_chat_artifact ON chat_messages(artifact_id);
       CREATE INDEX IF NOT EXISTS idx_chat_history ON chat_messages(meeting_history_id);
-      CREATE INDEX IF NOT EXISTS idx_chat_group ON chat_messages(group_id);
 
       CREATE TABLE IF NOT EXISTS personal_notes (
         id SERIAL PRIMARY KEY,
@@ -235,7 +234,7 @@ async function initPg() {
       );
     `);
 
-    // Migrate chat_messages columns on existing DBs
+    // Migrate chat_messages columns on existing DBs (must run before indexes on new cols)
     await client.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS sender_user_id INTEGER`);
     await client.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_chat_group ON chat_messages(group_id)`);
