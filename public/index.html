@@ -481,16 +481,27 @@
               <button type="button" id="summarySaveBtn" class="hidden" tabindex="-1"></button>
             </div>
 
-            <!-- TIMELINE TAB (desktop sidebar 4th panel) -->
+            <!-- TIMELINE TAB (desktop sidebar) -->
             <div class="side-tab-panel hidden" id="timelineTab" data-tab="timeline" role="tabpanel">
               <div class="screen-timeline side-timeline" id="sideScreenTimeline">
-                <div class="st-header">
-                  <label class="st-slideshow-toggle" title="Slideshow on/off">
+                <div class="st-header st-header-slim">
+                  <label class="st-slideshow-toggle" title="Slideshow">
                     <input type="checkbox" id="stSlideshowToggleSide">
                     <span>Slideshow</span>
                   </label>
                 </div>
-                
+                <div class="st-slots" id="stSlotsSide">
+                  <p class="st-empty"></p>
+                </div>
+                <div class="st-actions host-cohost-only hidden" id="stActionsSide">
+                  <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnSide"><i class="fa-solid fa-plus"></i> Add images</button>
+                  <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
+                </div>
+                <p class="st-empty st-hint"></p>
+              </div>
+            </div>
+
+            <!-- MEDIA TAB -->
             <div class="side-tab-panel hidden" id="mediaTab" data-tab="media" role="tabpanel">
               <div class="panel-block">
                 <button type="button" id="mediaMicToggle" class="btn full-width media-row"><i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span></button>
@@ -502,6 +513,8 @@
                 <button type="button" id="mediaRecordBtn" class="btn full-width media-row"><i class="fa-solid fa-circle" style="color:#e5484d"></i> Record</button>
               </div>
             </div>
+
+            <!-- ROOM TAB -->
             <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
               <div class="panel-block">
                 <button type="button" class="btn full-width media-row rail-open-panel" data-goto="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
@@ -517,6 +530,8 @@
                 <button type="button" class="btn full-width media-row" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
               </div>
             </div>
+
+            <!-- ACCOUNT TAB -->
             <div class="side-tab-panel hidden" id="accountTab" data-tab="account" role="tabpanel">
               <div class="panel-block">
                 <button type="button" class="btn full-width media-row" id="accThemeBtn"><i class="fa-solid fa-moon"></i> Theme</button>
@@ -526,30 +541,15 @@
                 <button type="button" class="btn full-width media-row danger-btn hidden" id="accEndBtn"><i class="fa-solid fa-xmark"></i> End for all</button>
               </div>
             </div>
+
+            <!-- SECURITY TAB -->
             <div class="side-tab-panel hidden" id="securityTab" data-tab="security" role="tabpanel">
               <div id="securityPanelMount" class="panel-block"></div>
             </div>
+
+            <!-- MORE TAB -->
             <div class="side-tab-panel hidden" id="moreTab" data-tab="more" role="tabpanel">
               <div id="morePanelMount" class="panel-block"></div>
-            <div class="side-tab-panel hidden" id="timelineTab" data-tab="timeline" role="tabpanel">
-              <div class="screen-timeline side-timeline" id="sideScreenTimeline">
-                <div class="st-header st-header-slim">
-                  <label class="st-slideshow-toggle" title="Slideshow">
-                    <input type="checkbox" id="stSlideshowToggleSide">
-                    <span>Slideshow</span>
-                  </label>
-                  <button type="button" class="btn small-btn" id="stAddImagesBtnSide"><i class="fa-solid fa-plus"></i> Add images</button>
-                  <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
-                </div>
-<div class="st-slots" id="stSlotsSide">
-                  <p class="st-empty"></p>
-                </div>
-                <div class="st-actions host-cohost-only hidden" id="stActionsSide">
-                  <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnSide"><i class="fa-solid fa-plus"></i> Add images</button>
-                  <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
-                </div>
-                <p class="st-empty st-hint"></p>
-              </div>
             </div>
           </div>
           <div id="chatPreviewOverlay" class="chat-preview-overlay hidden" aria-hidden="true">

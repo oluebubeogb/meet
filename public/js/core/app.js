@@ -1490,7 +1490,9 @@
     const lkVid = document.getElementById('lkScreenVideo');
     if (lkVid) try { lkVid.remove(); } catch (_) {}
     if (remoteVideo) {
-      remoteVideo.style.display = '';
+      // No screen share is active: keep the placeholder artwork visible instead
+      // of letting the empty remote video element paint over the stage.
+      remoteVideo.style.display = 'none';
       remoteVideo.style.opacity = '';
       remoteVideo.srcObject = null;
       remoteVideo.classList.remove('active');
@@ -8362,7 +8364,7 @@
       });
       // idle background vs share
       const big = document.getElementById('bigView') || document.querySelector('.big-view');
-      if (big) big.classList.toggle('has-active-share', sharers.length > 0 || !!document.querySelector('#bigView video, .big-view video'));
+      if (big) big.classList.toggle('has-active-share', sharers.length > 0);
     }
     setInterval(refreshStageCards, 1500);
 
