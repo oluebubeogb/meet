@@ -167,12 +167,15 @@ async function initPg() {
         session_id TEXT,
         sender_id TEXT,
         sender_name TEXT,
+        sender_user_id INTEGER,
         body TEXT,
         attachments JSONB,
+        group_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_chat_artifact ON chat_messages(artifact_id);
       CREATE INDEX IF NOT EXISTS idx_chat_history ON chat_messages(meeting_history_id);
+      CREATE INDEX IF NOT EXISTS idx_chat_group ON chat_messages(group_id);
 
       CREATE TABLE IF NOT EXISTS personal_notes (
         id SERIAL PRIMARY KEY,
@@ -183,7 +186,59 @@ async function initPg() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(artifact_id, user_id)
       );
+
+      /* Cross-meeting private DMs between logged-in users (and guest-aware) */
+      CREATE TABLE IF NOT EXISTS dm_threads (
+        id SERIAL PRIMARY KEY,
+        user_a_id INTEGER,
+        user_b_id INTEGER,
+        guest_key TEXT,
+        guest_display_name TEXT,
+        peer_is_guest BOOLEAN NOT NULL DEFAULT FALSE,
+        last_message_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_dm_threads_a ON dm_threads(user_a_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_threads_b ON dm_threads(user_b_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_threads_guest ON dm_threads(guest_key);
+
+      CREATE TABLE IF NOT EXISTS dm_messages (
+        id SERIAL PRIMARY KEY,
+        thread_id INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+        sender_user_id INTEGER,
+        sender_participant_id TEXT,
+        sender_name TEXT NOT NULL,
+        body TEXT NOT NULL,
+        meeting_code TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(thread_id);
+
+      /* In-meeting sub-groups (host/cohost managed) */
+      CREATE TABLE IF NOT EXISTS chat_groups (
+        id TEXT PRIMARY KEY,
+        meeting_code TEXT NOT NULL,
+        meeting_history_id INTEGER,
+        title TEXT NOT NULL,
+        created_by_participant_id TEXT,
+        created_by_user_id INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_groups_code ON chat_groups(meeting_code);
+
+      CREATE TABLE IF NOT EXISTS chat_group_members (
+        group_id TEXT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+        participant_id TEXT,
+        user_id INTEGER,
+        display_name TEXT,
+        PRIMARY KEY (group_id, participant_id)
+      );
     `);
+
+    // Migrate chat_messages columns on existing DBs
+    await client.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS sender_user_id INTEGER`);
+    await client.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS group_id TEXT`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_chat_group ON chat_messages(group_id)`);
 
     const { rows } = await client.query('SELECT COUNT(*)::int AS c FROM meeting_templates');
     if (rows[0].c === 0) {
@@ -346,8 +401,10 @@ function initSqlite() {
       session_id TEXT,
       sender_id TEXT,
       sender_name TEXT,
+      sender_user_id INTEGER,
       body TEXT,
       attachments TEXT,
+      group_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_chat_artifact ON chat_messages(artifact_id);
@@ -360,6 +417,49 @@ function initSqlite() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(artifact_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS dm_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_a_id INTEGER,
+      user_b_id INTEGER,
+      guest_key TEXT,
+      guest_display_name TEXT,
+      peer_is_guest INTEGER NOT NULL DEFAULT 0,
+      last_message_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_threads_a ON dm_threads(user_a_id);
+    CREATE INDEX IF NOT EXISTS idx_dm_threads_b ON dm_threads(user_b_id);
+    CREATE INDEX IF NOT EXISTS idx_dm_threads_guest ON dm_threads(guest_key);
+    CREATE TABLE IF NOT EXISTS dm_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id INTEGER NOT NULL,
+      sender_user_id INTEGER,
+      sender_participant_id TEXT,
+      sender_name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      meeting_code TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (thread_id) REFERENCES dm_threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(thread_id);
+    CREATE TABLE IF NOT EXISTS chat_groups (
+      id TEXT PRIMARY KEY,
+      meeting_code TEXT NOT NULL,
+      meeting_history_id INTEGER,
+      title TEXT NOT NULL,
+      created_by_participant_id TEXT,
+      created_by_user_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_groups_code ON chat_groups(meeting_code);
+    CREATE TABLE IF NOT EXISTS chat_group_members (
+      group_id TEXT NOT NULL,
+      participant_id TEXT,
+      user_id INTEGER,
+      display_name TEXT,
+      PRIMARY KEY (group_id, participant_id),
+      FOREIGN KEY (group_id) REFERENCES chat_groups(id) ON DELETE CASCADE
+    );
   `);
   // migrate older sqlite DBs missing new columns
   try {
@@ -367,6 +467,11 @@ function initSqlite() {
     if (!cols.includes('file_path')) sqlite.exec(`ALTER TABLE meeting_recordings ADD COLUMN file_path TEXT`);
     if (!cols.includes('file_url')) sqlite.exec(`ALTER TABLE meeting_recordings ADD COLUMN file_url TEXT`);
     if (!cols.includes('artifact_id')) sqlite.exec(`ALTER TABLE meeting_recordings ADD COLUMN artifact_id INTEGER`);
+  } catch (_) {}
+  try {
+    const chatCols = sqlite.prepare(`PRAGMA table_info(chat_messages)`).all().map((c) => c.name);
+    if (!chatCols.includes('sender_user_id')) sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN sender_user_id INTEGER`);
+    if (!chatCols.includes('group_id')) sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN group_id TEXT`);
   } catch (_) {}
 
   const count = sqlite.prepare('SELECT COUNT(*) AS c FROM meeting_templates').get().c;
@@ -1025,41 +1130,6 @@ async function setArtifactPublic(artifactId, isPublic) {
   return getArtifactById(artifactId);
 }
 
-async function saveChatMessage({ meetingHistoryId, artifactId, sessionId, senderId, senderName, body, attachments }) {
-  await ensureReady();
-  if (USE_PG) {
-    const r = await q(
-      `INSERT INTO chat_messages (meeting_history_id, artifact_id, session_id, sender_id, sender_name, body, attachments)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [
-        meetingHistoryId || null,
-        artifactId || null,
-        sessionId || null,
-        senderId || null,
-        senderName || null,
-        body || null,
-        attachments ? JSON.stringify(attachments) : null,
-      ]
-    );
-    return r.rows[0];
-  }
-  const info = sqlite
-    .prepare(
-      `INSERT INTO chat_messages (meeting_history_id, artifact_id, session_id, sender_id, sender_name, body, attachments)
-       VALUES (?,?,?,?,?,?,?)`
-    )
-    .run(
-      meetingHistoryId || null,
-      artifactId || null,
-      sessionId || null,
-      senderId || null,
-      senderName || null,
-      body || null,
-      attachments ? JSON.stringify(attachments) : null
-    );
-  return sqlite.prepare(`SELECT * FROM chat_messages WHERE id = ?`).get(info.lastInsertRowid);
-}
-
 async function getChatForArtifact(artifactId, limit = 500) {
   await ensureReady();
   if (USE_PG) {
@@ -1129,6 +1199,306 @@ async function ensureArtifactForHistory(meetingHistoryId, shortCode) {
   return createArtifact({ meetingHistoryId, shortCode });
 }
 
+/* ───────────────────────── Extended chat helpers ───────────────────────── */
+
+async function saveChatMessage({
+  meetingHistoryId,
+  artifactId,
+  sessionId,
+  senderId,
+  senderName,
+  senderUserId,
+  body,
+  attachments,
+  groupId,
+}) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `INSERT INTO chat_messages
+        (meeting_history_id, artifact_id, session_id, sender_id, sender_name, sender_user_id, body, attachments, group_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        meetingHistoryId || null,
+        artifactId || null,
+        sessionId || null,
+        senderId || null,
+        senderName || null,
+        senderUserId || null,
+        body || null,
+        attachments ? JSON.stringify(attachments) : null,
+        groupId || null,
+      ]
+    );
+    return r.rows[0];
+  }
+  const info = sqlite
+    .prepare(
+      `INSERT INTO chat_messages
+        (meeting_history_id, artifact_id, session_id, sender_id, sender_name, sender_user_id, body, attachments, group_id)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      meetingHistoryId || null,
+      artifactId || null,
+      sessionId || null,
+      senderId || null,
+      senderName || null,
+      senderUserId || null,
+      body || null,
+      attachments ? JSON.stringify(attachments) : null,
+      groupId || null
+    );
+  return sqlite.prepare(`SELECT * FROM chat_messages WHERE id = ?`).get(info.lastInsertRowid);
+}
+
+async function getChatForHistory(meetingHistoryId, limit = 500) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `SELECT * FROM chat_messages WHERE meeting_history_id = $1 AND (group_id IS NULL OR group_id = '') ORDER BY id ASC LIMIT $2`,
+      [meetingHistoryId, limit]
+    );
+    return r.rows;
+  }
+  return sqlite
+    .prepare(
+      `SELECT * FROM chat_messages WHERE meeting_history_id = ? AND (group_id IS NULL OR group_id = '') ORDER BY id ASC LIMIT ?`
+    )
+    .all(meetingHistoryId, limit);
+}
+
+async function getChatForGroup(groupId, limit = 500) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `SELECT * FROM chat_messages WHERE group_id = $1 ORDER BY id ASC LIMIT $2`,
+      [groupId, limit]
+    );
+    return r.rows;
+  }
+  return sqlite
+    .prepare(`SELECT * FROM chat_messages WHERE group_id = ? ORDER BY id ASC LIMIT ?`)
+    .all(groupId, limit);
+}
+
+/** Find or create a DM thread between two logged-in users (order-independent). */
+async function findOrCreateDmThread(userAId, userBId) {
+  await ensureReady();
+  const a = Math.min(userAId, userBId);
+  const b = Math.max(userAId, userBId);
+  if (USE_PG) {
+    let r = await q(
+      `SELECT * FROM dm_threads WHERE user_a_id = $1 AND user_b_id = $2 AND peer_is_guest = FALSE LIMIT 1`,
+      [a, b]
+    );
+    if (r.rows[0]) return r.rows[0];
+    r = await q(
+      `INSERT INTO dm_threads (user_a_id, user_b_id, peer_is_guest) VALUES ($1,$2,FALSE) RETURNING *`,
+      [a, b]
+    );
+    return r.rows[0];
+  }
+  let row = sqlite
+    .prepare(
+      `SELECT * FROM dm_threads WHERE user_a_id = ? AND user_b_id = ? AND peer_is_guest = 0 LIMIT 1`
+    )
+    .get(a, b);
+  if (row) return row;
+  const info = sqlite
+    .prepare(`INSERT INTO dm_threads (user_a_id, user_b_id, peer_is_guest) VALUES (?,?,0)`)
+    .run(a, b);
+  return sqlite.prepare(`SELECT * FROM dm_threads WHERE id = ?`).get(info.lastInsertRowid);
+}
+
+/** DM thread between a logged-in user and a guest (keyed by guest participant id or stable guest key). */
+async function findOrCreateGuestDmThread(userId, guestKey, guestDisplayName) {
+  await ensureReady();
+  if (USE_PG) {
+    let r = await q(
+      `SELECT * FROM dm_threads WHERE user_a_id = $1 AND guest_key = $2 AND peer_is_guest = TRUE LIMIT 1`,
+      [userId, guestKey]
+    );
+    if (r.rows[0]) return r.rows[0];
+    r = await q(
+      `INSERT INTO dm_threads (user_a_id, guest_key, guest_display_name, peer_is_guest)
+       VALUES ($1,$2,$3,TRUE) RETURNING *`,
+      [userId, guestKey, guestDisplayName || 'Guest']
+    );
+    return r.rows[0];
+  }
+  let row = sqlite
+    .prepare(
+      `SELECT * FROM dm_threads WHERE user_a_id = ? AND guest_key = ? AND peer_is_guest = 1 LIMIT 1`
+    )
+    .get(userId, guestKey);
+  if (row) return row;
+  const info = sqlite
+    .prepare(
+      `INSERT INTO dm_threads (user_a_id, guest_key, guest_display_name, peer_is_guest) VALUES (?,?,?,1)`
+    )
+    .run(userId, guestKey, guestDisplayName || 'Guest');
+  return sqlite.prepare(`SELECT * FROM dm_threads WHERE id = ?`).get(info.lastInsertRowid);
+}
+
+async function saveDmMessage({
+  threadId,
+  senderUserId,
+  senderParticipantId,
+  senderName,
+  body,
+  meetingCode,
+}) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `INSERT INTO dm_messages (thread_id, sender_user_id, sender_participant_id, sender_name, body, meeting_code)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        threadId,
+        senderUserId || null,
+        senderParticipantId || null,
+        senderName || 'User',
+        body || '',
+        meetingCode || null,
+      ]
+    );
+    await q(`UPDATE dm_threads SET last_message_at = NOW() WHERE id = $1`, [threadId]);
+    return r.rows[0];
+  }
+  const info = sqlite
+    .prepare(
+      `INSERT INTO dm_messages (thread_id, sender_user_id, sender_participant_id, sender_name, body, meeting_code)
+       VALUES (?,?,?,?,?,?)`
+    )
+    .run(
+      threadId,
+      senderUserId || null,
+      senderParticipantId || null,
+      senderName || 'User',
+      body || '',
+      meetingCode || null
+    );
+  sqlite
+    .prepare(`UPDATE dm_threads SET last_message_at = datetime('now') WHERE id = ?`)
+    .run(threadId);
+  return sqlite.prepare(`SELECT * FROM dm_messages WHERE id = ?`).get(info.lastInsertRowid);
+}
+
+async function getDmMessages(threadId, limit = 200) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `SELECT * FROM dm_messages WHERE thread_id = $1 ORDER BY id ASC LIMIT $2`,
+      [threadId, limit]
+    );
+    return r.rows;
+  }
+  return sqlite
+    .prepare(`SELECT * FROM dm_messages WHERE thread_id = ? ORDER BY id ASC LIMIT ?`)
+    .all(threadId, limit);
+}
+
+async function listDmThreadsForUser(userId, limit = 50) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `SELECT * FROM dm_threads
+       WHERE user_a_id = $1 OR user_b_id = $1
+       ORDER BY COALESCE(last_message_at, created_at) DESC
+       LIMIT $2`,
+      [userId, limit]
+    );
+    return r.rows;
+  }
+  return sqlite
+    .prepare(
+      `SELECT * FROM dm_threads
+       WHERE user_a_id = ? OR user_b_id = ?
+       ORDER BY COALESCE(last_message_at, created_at) DESC
+       LIMIT ?`
+    )
+    .all(userId, userId, limit);
+}
+
+async function getDmThreadById(threadId) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(`SELECT * FROM dm_threads WHERE id = $1`, [threadId]);
+    return r.rows[0] || null;
+  }
+  return sqlite.prepare(`SELECT * FROM dm_threads WHERE id = ?`).get(threadId) || null;
+}
+
+async function createChatGroup({ id, meetingCode, meetingHistoryId, title, createdByParticipantId, createdByUserId }) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(
+      `INSERT INTO chat_groups (id, meeting_code, meeting_history_id, title, created_by_participant_id, created_by_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [id, meetingCode, meetingHistoryId || null, title, createdByParticipantId || null, createdByUserId || null]
+    );
+    return r.rows[0];
+  }
+  sqlite
+    .prepare(
+      `INSERT INTO chat_groups (id, meeting_code, meeting_history_id, title, created_by_participant_id, created_by_user_id)
+       VALUES (?,?,?,?,?,?)`
+    )
+    .run(id, meetingCode, meetingHistoryId || null, title, createdByParticipantId || null, createdByUserId || null);
+  return sqlite.prepare(`SELECT * FROM chat_groups WHERE id = ?`).get(id);
+}
+
+async function addChatGroupMember({ groupId, participantId, userId, displayName }) {
+  await ensureReady();
+  if (USE_PG) {
+    await q(
+      `INSERT INTO chat_group_members (group_id, participant_id, user_id, display_name)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (group_id, participant_id) DO UPDATE SET display_name = EXCLUDED.display_name, user_id = EXCLUDED.user_id`,
+      [groupId, participantId, userId || null, displayName || null]
+    );
+    return;
+  }
+  sqlite
+    .prepare(
+      `INSERT OR REPLACE INTO chat_group_members (group_id, participant_id, user_id, display_name) VALUES (?,?,?,?)`
+    )
+    .run(groupId, participantId, userId || null, displayName || null);
+}
+
+async function removeChatGroupMember(groupId, participantId) {
+  await ensureReady();
+  if (USE_PG) {
+    await q(`DELETE FROM chat_group_members WHERE group_id = $1 AND participant_id = $2`, [
+      groupId,
+      participantId,
+    ]);
+    return;
+  }
+  sqlite
+    .prepare(`DELETE FROM chat_group_members WHERE group_id = ? AND participant_id = ?`)
+    .run(groupId, participantId);
+}
+
+async function listChatGroupMembers(groupId) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(`SELECT * FROM chat_group_members WHERE group_id = $1`, [groupId]);
+    return r.rows;
+  }
+  return sqlite.prepare(`SELECT * FROM chat_group_members WHERE group_id = ?`).all(groupId);
+}
+
+async function getChatGroup(groupId) {
+  await ensureReady();
+  if (USE_PG) {
+    const r = await q(`SELECT * FROM chat_groups WHERE id = $1`, [groupId]);
+    return r.rows[0] || null;
+  }
+  return sqlite.prepare(`SELECT * FROM chat_groups WHERE id = ?`).get(groupId) || null;
+}
+
 module.exports = {
   ensureReady,
   USE_PG,
@@ -1186,6 +1556,19 @@ module.exports = {
   ensureArtifactForHistory,
   saveChatMessage,
   getChatForArtifact,
+  getChatForHistory,
+  getChatForGroup,
+  findOrCreateDmThread,
+  findOrCreateGuestDmThread,
+  saveDmMessage,
+  getDmMessages,
+  listDmThreadsForUser,
+  getDmThreadById,
+  createChatGroup,
+  addChatGroupMember,
+  removeChatGroupMember,
+  listChatGroupMembers,
+  getChatGroup,
   upsertPersonalNote,
   getPersonalNote,
 };

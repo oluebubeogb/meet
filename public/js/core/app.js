@@ -918,12 +918,24 @@
       }
       if (msg.type === 'chat') {
         appendChatMessage(msg); try { if (typeof window.__syncAllChatSurfaces === 'function') window.__syncAllChatSurfaces(); } catch (_) {}
+        try {
+          if (typeof window.__meetNotePublicChat === 'function') {
+            window.__meetNotePublicChat(msg.text || '', msg.name || '', msg.participantId);
+          }
+        } catch (_) {}
         return;
       }
       if (msg.type === 'chat-history') {
         var box = $('chatMessages');
         if (box) box.innerHTML = '';
         (msg.messages || []).forEach(function (m) { appendChatMessage(m); });
+        try {
+          if (typeof window.__meetNotePublicChat === 'function') {
+            (msg.messages || []).forEach(function (m) {
+              window.__meetNotePublicChat(m.text || '', m.name || '', m.participantId);
+            });
+          }
+        } catch (_) {}
         // Sync mobile/tablet chat surfaces so history shows without needing to send first
         try {
           if (typeof window.__syncAllChatSurfaces === 'function') window.__syncAllChatSurfaces();
@@ -2985,6 +2997,11 @@
   function appendChatMessage(msg) {
     const box = $('chatMessages');
     if (!box) return;
+    // When a private/sub-group thread is open, don't mix public messages into the thread DOM
+    try {
+      var chId = (typeof window.__meetActiveChannelId !== 'undefined') ? window.__meetActiveChannelId : null;
+      if (chId && chId !== 'everyone') return;
+    } catch (_) {}
     applySelfChatColor();
     const row = document.createElement('div');
     const isMe = msg.participantId === currentMeeting?.participantId;
@@ -7658,19 +7675,47 @@
     // WS extra handlers — attach to live socket
     const extraHandlers = {
       'private-chat': function (msg) {
-        const m = msg.message;
-        if (!m) return;
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        const el = document.createElement('div');
-        el.className = 'chat-msg private-msg';
-        const selfId = currentMeeting && currentMeeting.participantId;
-        el.innerHTML = '<span class="tag">Private</span> <strong>' +
-          (m.fromName || '') +
-          (m.fromId === selfId ? ' → ' + (m.toName || '') : '') +
-          ':</strong> ' + (m.text || '');
-        box.appendChild(el);
-        box.scrollTop = box.scrollHeight;
+        if (typeof window.__meetIngestPrivate === 'function') window.__meetIngestPrivate(msg);
+      },
+      'private-chat-history': function (msg) {
+        if (typeof window.__meetIngestPrivateHistory === 'function') {
+          window.__meetIngestPrivateHistory(msg.messages || []);
+        }
+      },
+      'group-state': function (msg) {
+        if (msg.group && typeof window.__meetIngestGroupState === 'function') {
+          window.__meetIngestGroupState(msg.group);
+        }
+      },
+      'group-members': function (msg) {
+        if (msg.groupId && Array.isArray(msg.members) && typeof window.__meetIngestGroupState === 'function') {
+          var ch = typeof chatChannels !== 'undefined' ? chatChannels[msg.groupId] : null;
+          window.__meetIngestGroupState({
+            id: msg.groupId,
+            title: ch ? ch.title : 'Group',
+            members: msg.members,
+          });
+        }
+      },
+      'group-chat': function (msg) {
+        if (typeof window.__meetIngestGroupChat === 'function') window.__meetIngestGroupChat(msg);
+      },
+      'group-chat-history': function (msg) {
+        if (!msg.groupId || !Array.isArray(msg.messages)) return;
+        msg.messages.forEach(function (m) {
+          if (typeof window.__meetIngestGroupChat === 'function') {
+            window.__meetIngestGroupChat({ message: Object.assign({ groupId: msg.groupId }, m) });
+          }
+        });
+      },
+      'group-removed': function (msg) {
+        if (!msg.groupId) return;
+        try {
+          if (typeof chatChannels !== 'undefined' && chatChannels[msg.groupId]) {
+            delete chatChannels[msg.groupId];
+            if (activeChannelId === msg.groupId && typeof showChatInbox === 'function') showChatInbox();
+          }
+        } catch (_) {}
       },
       'recording-capture': function (msg) {
         if (!isHostNow()) return;
@@ -7758,17 +7803,149 @@
 
 
     var chatChannels = {
-      everyone: { id: 'everyone', title: 'Group chat', pinned: true, messages: [], unread: 0, lastText: '', lastAt: 0 }
+      everyone: { id: 'everyone', title: 'Group chat', pinned: true, kind: 'group', messages: [], unread: 0, lastText: '', lastAt: 0, members: [] }
     };
     var activeChannelId = null;
+    // Expose for appendChatMessage (same outer function or cross-scope)
+    Object.defineProperty(window, '__meetActiveChannelId', {
+      get: function () { return activeChannelId; },
+      set: function (v) { activeChannelId = v; },
+      configurable: true
+    });
+
+    function applySelfChatColorSafe() {
+      try { if (typeof applySelfChatColor === 'function') applySelfChatColor(); } catch (_) {}
+    }
+
+    function formatChatTime(ts) {
+      if (!ts) return '';
+      try {
+        var d = new Date(typeof ts === 'number' ? ts : Date.parse(ts));
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (_) { return ''; }
+    }
+
+    /** Premium left/right bubble renderer used by public, private, and sub-group threads */
+    function renderBubbleMessage(m, opts) {
+      opts = opts || {};
+      var selfId = currentMeeting && currentMeeting.participantId;
+      var selfUserId = currentUser && currentUser.id;
+      var isMe = false;
+      if (typeof m.isMe === 'boolean') isMe = m.isMe;
+      else if (m.fromId && selfId && m.fromId === selfId) isMe = true;
+      else if (m.participantId && selfId && m.participantId === selfId) isMe = true;
+      else if (m.fromUserId && selfUserId && m.fromUserId === selfUserId) isMe = true;
+
+      var row = document.createElement('div');
+      row.className = 'chat-msg-row' + (isMe ? ' is-me' : '');
+      applySelfChatColorSafe();
+      if (isMe) row.style.setProperty('--chat-self-color', (typeof selfChatColor === 'function' ? selfChatColor() : '#4f8cff'));
+
+      var who = isMe ? 'You' : (m.fromName || m.name || 'User');
+      var body = m.text || m.body || '';
+      if (typeof linkifyAndMentions === 'function' && m.mentions) {
+        body = linkifyAndMentions(body, m.mentions);
+      } else {
+        body = (typeof escapeHtml === 'function' ? escapeHtml(body) : body);
+      }
+      var meta = formatChatTime(m.at || m.created_at);
+      if (m.peerIsGuest || opts.peerIsGuest) {
+        // subtle marker handled by channel banner, not per message
+      }
+      row.innerHTML =
+        '<span class="chat-who">' + (typeof escapeHtml === 'function' ? escapeHtml(who) : who) + '</span>' +
+        (body ? '<div class="chat-msg-body">' + body + '</div>' : '') +
+        (meta ? '<div class="chat-msg-meta">' + meta + '</div>' : '');
+      return row;
+    }
+
+    function appendBubbleToBox(box, m, opts) {
+      if (!box) return;
+      var row = renderBubbleMessage(m, opts);
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+      return row;
+    }
+
+    function setThreadTitle(title) {
+      var el = document.getElementById('chatThreadTitle');
+      if (el) el.textContent = title || 'Chat';
+    }
+
+    function setMembersBtnVisible(show) {
+      var btn = document.getElementById('chatThreadMembersBtn');
+      if (btn) btn.classList.toggle('hidden', !show);
+      var panel = document.getElementById('chatMembersPanel');
+      if (!show && panel) panel.classList.add('hidden');
+    }
+
+    function renderMembersPanel(ch) {
+      var list = document.getElementById('chatMembersList');
+      var addRow = document.getElementById('chatMembersAddRow');
+      if (!list) return;
+      list.innerHTML = '';
+      var members = (ch && ch.memberDetails) || [];
+      if (!members.length && ch && Array.isArray(ch.members)) {
+        members = ch.members.map(function (id) {
+          var p = (participants || []).find(function (x) { return (x.id || x.participantId) === id; });
+          return { id: id, name: p ? (p.name || id) : id, role: p ? p.role : 'participant' };
+        });
+      }
+      var canManage = isHostLike();
+      members.forEach(function (m) {
+        var li = document.createElement('li');
+        var role = m.role || 'participant';
+        li.innerHTML =
+          '<span><strong>' + escapeHtml(m.name || m.id) + '</strong>' +
+          '<span class="member-role">' + escapeHtml(role) + '</span></span>';
+        if (canManage && ch && ch.kind === 'subgroup' && m.id !== (currentMeeting && currentMeeting.participantId)) {
+          var rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'member-remove';
+          rm.title = 'Remove';
+          rm.innerHTML = '<i class="fa-solid fa-user-minus"></i>';
+          rm.addEventListener('click', function () {
+            if (typeof sendWS === 'function') sendWS({ type: 'group-remove-member', groupId: ch.id, targetId: m.id });
+            ch.members = (ch.members || []).filter(function (id) { return id !== m.id; });
+            ch.memberDetails = (ch.memberDetails || []).filter(function (x) { return x.id !== m.id; });
+            renderMembersPanel(ch);
+          });
+          li.appendChild(rm);
+        }
+        list.appendChild(li);
+      });
+      if (addRow) {
+        addRow.classList.toggle('hidden', !(canManage && ch && ch.kind === 'subgroup'));
+        if (canManage && ch && ch.kind === 'subgroup') {
+          var sel = document.getElementById('chatMembersAddSelect');
+          if (sel) {
+            sel.innerHTML = '<option value="">Add participant…</option>';
+            var existing = {};
+            (ch.members || []).forEach(function (id) { existing[id] = true; });
+            var selfId = currentMeeting && currentMeeting.participantId;
+            (participants || []).forEach(function (p) {
+              var id = p.id || p.participantId;
+              if (!id || id === selfId || existing[id]) return;
+              var opt = document.createElement('option');
+              opt.value = id;
+              opt.textContent = p.name || id;
+              sel.appendChild(opt);
+            });
+          }
+        }
+      }
+    }
 
     function showChatInbox() {
       var inbox = document.getElementById('chatInbox');
       var thread = document.getElementById('chatThreadView');
       var ngp = document.getElementById('chatNewGroupPanel');
+      var panel = document.getElementById('chatMembersPanel');
       if (inbox) inbox.classList.remove('hidden');
       if (thread) thread.classList.add('hidden');
       if (ngp) ngp.classList.add('hidden');
+      if (panel) panel.classList.add('hidden');
       activeChannelId = null;
       renderChatInbox();
       var ng = document.getElementById('chatNewGroupBtn');
@@ -7788,7 +7965,8 @@
       items.forEach(function (ch) {
         var li = document.createElement('li');
         if (ch.pinned) li.classList.add('pinned');
-        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(ch.title) + '</span>' +
+        var guestBadge = ch.peerIsGuest ? ' <span class="quiet-label">(guest)</span>' : '';
+        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(ch.title) + guestBadge + '</span>' +
           (ch.unread ? '<span class="dm-unread">' + ch.unread + '</span>' : '') + '</div>' +
           '<div class="dm-excerpt">' + escapeHtml(String(ch.lastText || '').slice(0, 70)) + '</div>';
         li.addEventListener('click', function () { openChatChannel(ch.id); });
@@ -7801,16 +7979,63 @@
         var key = 'dm:' + id;
         if (chatChannels[key]) return;
         var li = document.createElement('li');
-        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) + '</div><div class="dm-excerpt">Message…</div>';
+        var isGuest = !p.userId;
+        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) +
+          (isGuest ? ' <span class="quiet-label">(guest)</span>' : '') +
+          '</div><div class="dm-excerpt">Message…</div>';
         li.addEventListener('click', function () {
-          chatChannels[key] = { id: key, title: p.name || id, peerId: id, messages: [], unread: 0, lastText: '', lastAt: 0 };
+          chatChannels[key] = {
+            id: key,
+            title: p.name || id,
+            peerId: id,
+            peerUserId: p.userId || null,
+            peerIsGuest: isGuest,
+            kind: 'dm',
+            messages: [],
+            unread: 0,
+            lastText: '',
+            lastAt: 0
+          };
           openChatChannel(key);
         });
         list.appendChild(li);
       });
     }
 
-    function openChatChannel(id) {
+    async function loadDmHistoryForChannel(ch) {
+      if (!ch || ch.kind !== 'dm' || !ch.peerUserId || !currentUser || !authToken) return;
+      try {
+        var data = await api('/api/dm/with-user?userId=' + encodeURIComponent(ch.peerUserId));
+        if (!data || !Array.isArray(data.messages)) return;
+        ch.threadId = data.threadId;
+        // Merge without duplicates
+        var existingIds = {};
+        (ch.messages || []).forEach(function (m) { if (m.id) existingIds[m.id] = true; });
+        data.messages.forEach(function (m) {
+          if (m.id && existingIds[m.id]) return;
+          ch.messages.push({
+            id: m.id,
+            fromName: m.fromName,
+            fromUserId: m.fromUserId,
+            text: m.text,
+            at: m.at,
+            isMe: m.isMe
+          });
+        });
+        ch.messages.sort(function (a, b) {
+          return (Date.parse(a.at) || a.at || 0) - (Date.parse(b.at) || b.at || 0);
+        });
+        if (ch.messages.length) {
+          var last = ch.messages[ch.messages.length - 1];
+          ch.lastText = last.text || '';
+          ch.lastAt = Date.parse(last.at) || Date.now();
+        }
+      } catch (e) {
+        console.warn('[dm history]', e);
+      }
+    }
+
+    async function openChatChannel(id) {
       var ch = chatChannels[id];
       if (!ch) return;
       activeChannelId = id;
@@ -7818,17 +8043,31 @@
       var inbox = document.getElementById('chatInbox');
       var ngp = document.getElementById('chatNewGroupPanel');
       var view = document.getElementById('chatThreadView');
+      var panel = document.getElementById('chatMembersPanel');
       if (inbox) inbox.classList.add('hidden');
       if (ngp) ngp.classList.add('hidden');
       if (view) view.classList.remove('hidden');
+      if (panel) panel.classList.add('hidden');
+
+      setThreadTitle(ch.title + (ch.peerIsGuest ? ' (guest)' : ''));
+      setMembersBtnVisible(ch.kind === 'subgroup' || ch.kind === 'group');
+
+      // Load cross-meeting DM history when both parties are logged in
+      if (ch.kind === 'dm' && ch.peerUserId && currentUser) {
+        await loadDmHistoryForChannel(ch);
+      }
+
       var box = document.getElementById('chatMessages');
       if (box) {
         box.innerHTML = '';
+        if (ch.peerIsGuest) {
+          var banner = document.createElement('div');
+          banner.className = 'chat-msg-row guest-label-row';
+          banner.textContent = 'This chat includes a guest — history is kept for your account';
+          box.appendChild(banner);
+        }
         (ch.messages || []).forEach(function (m) {
-          var el = document.createElement('div');
-          el.className = 'chat-msg';
-          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
-          box.appendChild(el);
+          appendBubbleToBox(box, m, { peerIsGuest: ch.peerIsGuest });
         });
         box.scrollTop = box.scrollHeight;
       }
@@ -7846,6 +8085,38 @@
     }
 
     document.getElementById('chatThreadBack') && document.getElementById('chatThreadBack').addEventListener('click', showChatInbox);
+    document.getElementById('chatThreadMembersBtn') && document.getElementById('chatThreadMembersBtn').addEventListener('click', function () {
+      var ch = chatChannels[activeChannelId];
+      if (!ch) return;
+      var panel = document.getElementById('chatMembersPanel');
+      if (!panel) return;
+      var open = panel.classList.contains('hidden');
+      if (open) {
+        renderMembersPanel(ch);
+        panel.classList.remove('hidden');
+      } else {
+        panel.classList.add('hidden');
+      }
+    });
+    document.getElementById('chatMembersClose') && document.getElementById('chatMembersClose').addEventListener('click', function () {
+      document.getElementById('chatMembersPanel')?.classList.add('hidden');
+    });
+    document.getElementById('chatMembersAddBtn') && document.getElementById('chatMembersAddBtn').addEventListener('click', function () {
+      var ch = chatChannels[activeChannelId];
+      if (!ch || ch.kind !== 'subgroup') return;
+      var sel = document.getElementById('chatMembersAddSelect');
+      var targetId = sel && sel.value;
+      if (!targetId) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'group-add-member', groupId: ch.id, targetId: targetId });
+      if (!ch.members) ch.members = [];
+      if (ch.members.indexOf(targetId) < 0) ch.members.push(targetId);
+      var p = (participants || []).find(function (x) { return (x.id || x.participantId) === targetId; });
+      if (!ch.memberDetails) ch.memberDetails = [];
+      ch.memberDetails.push({ id: targetId, name: p ? p.name : targetId, role: p ? p.role : 'participant' });
+      renderMembersPanel(ch);
+      if (sel) sel.value = '';
+    });
+
     document.getElementById('chatNewGroupBtn') && document.getElementById('chatNewGroupBtn').addEventListener('click', function () {
       document.getElementById('chatInbox') && document.getElementById('chatInbox').classList.add('hidden');
       document.getElementById('chatThreadView') && document.getElementById('chatThreadView').classList.add('hidden');
@@ -7868,8 +8139,23 @@
       var ids = [];
       document.querySelectorAll('#newGroupMemberList input:checked').forEach(function (i) { ids.push(i.getAttribute('data-pid')); });
       if (!ids.length) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      if (selfId && ids.indexOf(selfId) < 0) ids.unshift(selfId);
       var gid = 'grp:' + Date.now();
-      chatChannels[gid] = { id: gid, title: name, members: ids, messages: [], unread: 0, lastText: '', lastAt: Date.now() };
+      chatChannels[gid] = {
+        id: gid,
+        title: name,
+        members: ids,
+        memberDetails: ids.map(function (id) {
+          var p = (participants || []).find(function (x) { return (x.id || x.participantId) === id; });
+          return { id: id, name: p ? p.name : id, role: p ? p.role : 'participant' };
+        }),
+        kind: 'subgroup',
+        messages: [],
+        unread: 0,
+        lastText: '',
+        lastAt: Date.now()
+      };
       if (typeof sendWS === 'function') sendWS({ type: 'group-create', groupId: gid, title: name, members: ids });
       openChatChannel(gid);
     });
@@ -7891,39 +8177,63 @@
           var me = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
           if (me) selfName = me.name || 'Me';
         } catch (_) {}
-        if (ch.peerId && typeof sendWS === 'function') sendWS({ type: 'private-chat', targetId: ch.peerId, text: text });
-        else if (String(ch.id).indexOf('grp:') === 0 && typeof sendWS === 'function') sendWS({ type: 'group-chat', groupId: ch.id, text: text, members: ch.members });
-        var msg = { fromName: selfName, text: text, at: Date.now() };
+        if (ch.peerId && typeof sendWS === 'function') {
+          sendWS({ type: 'private-chat', targetId: ch.peerId, text: text });
+        } else if (ch.kind === 'subgroup' && typeof sendWS === 'function') {
+          sendWS({ type: 'group-chat', groupId: ch.id, text: text, members: ch.members });
+        }
+        var msg = {
+          fromName: selfName,
+          fromId: currentMeeting && currentMeeting.participantId,
+          fromUserId: currentUser && currentUser.id,
+          text: text,
+          at: Date.now(),
+          isMe: true
+        };
         ch.messages.push(msg);
         ch.lastText = text;
         ch.lastAt = Date.now();
         if (input) input.value = '';
         var box = document.getElementById('chatMessages');
-        if (box) {
-          var el = document.createElement('div');
-          el.className = 'chat-msg';
-          el.innerHTML = '<strong>' + escapeHtml(msg.fromName) + ':</strong> ' + escapeHtml(msg.text);
-          box.appendChild(el);
-          box.scrollTop = box.scrollHeight;
-        }
+        if (box) appendBubbleToBox(box, msg);
       }, true);
     }
 
-    window.__meetNotePublicChat = function (text, fromName) {
+    window.__meetNotePublicChat = function (text, fromName, participantId) {
       var ch = chatChannels.everyone;
       ch.lastText = text || '';
       ch.lastAt = Date.now();
-      ch.messages.push({ fromName: fromName || '', text: text || '', at: Date.now() });
+      ch.messages.push({
+        fromName: fromName || '',
+        participantId: participantId,
+        text: text || '',
+        at: Date.now()
+      });
       if (activeChannelId !== 'everyone') ch.unread = (ch.unread || 0) + 1;
       updateChatBadge();
       var inbox = document.getElementById('chatInbox');
       if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+      if (activeChannelId === 'everyone') {
+        var box = document.getElementById('chatMessages');
+        if (box) appendBubbleToBox(box, { fromName: fromName, participantId: participantId, text: text, at: Date.now() });
+      }
     };
 
-    window.__meetOpenDm = function (id, name) {
+    window.__meetOpenDm = function (id, name, userId) {
       var key = 'dm:' + id;
       if (!chatChannels[key]) {
-        chatChannels[key] = { id: key, title: name || id, peerId: id, messages: [], unread: 0, lastText: '', lastAt: 0 };
+        chatChannels[key] = {
+          id: key,
+          title: name || id,
+          peerId: id,
+          peerUserId: userId || null,
+          peerIsGuest: !userId,
+          kind: 'dm',
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
       }
       if (openPanel !== 'chat') togglePanel('chat');
       openChatChannel(key);
@@ -7935,28 +8245,108 @@
       var selfId = currentMeeting && currentMeeting.participantId;
       var otherId = m.fromId === selfId ? m.toId : m.fromId;
       var otherName = m.fromId === selfId ? m.toName : m.fromName;
+      var otherUserId = m.fromId === selfId ? m.toUserId : m.fromUserId;
       if (!otherId) return;
       var key = 'dm:' + otherId;
-      if (!chatChannels[key]) chatChannels[key] = { id: key, title: otherName || otherId, peerId: otherId, messages: [], unread: 0, lastText: '', lastAt: 0 };
+      if (!chatChannels[key]) {
+        chatChannels[key] = {
+          id: key,
+          title: otherName || otherId,
+          peerId: otherId,
+          peerUserId: otherUserId || null,
+          peerIsGuest: !otherUserId,
+          kind: 'dm',
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      }
       chatChannels[key].messages.push(m);
       chatChannels[key].lastText = m.text || '';
       chatChannels[key].lastAt = m.at || Date.now();
       chatChannels[key].title = otherName || chatChannels[key].title;
+      if (otherUserId) chatChannels[key].peerUserId = otherUserId;
+      chatChannels[key].peerIsGuest = !chatChannels[key].peerUserId;
       if (activeChannelId !== key) chatChannels[key].unread = (chatChannels[key].unread || 0) + 1;
       else {
         var box = document.getElementById('chatMessages');
-        if (box) {
-          var el = document.createElement('div');
-          el.className = 'chat-msg';
-          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
-          box.appendChild(el);
-          box.scrollTop = box.scrollHeight;
-        }
+        if (box) appendBubbleToBox(box, m);
       }
       updateChatBadge();
       var inbox = document.getElementById('chatInbox');
       if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
     };
+
+    window.__meetIngestPrivateHistory = function (messages) {
+      if (!Array.isArray(messages)) return;
+      messages.forEach(function (m) {
+        window.__meetIngestPrivate({ message: m });
+      });
+      // clear unread from history replay
+      Object.keys(chatChannels).forEach(function (k) {
+        if (String(k).indexOf('dm:') === 0) chatChannels[k].unread = 0;
+      });
+      updateChatBadge();
+    };
+
+    window.__meetIngestGroupState = function (group) {
+      if (!group || !group.id) return;
+      var gid = group.id;
+      if (!chatChannels[gid]) {
+        chatChannels[gid] = {
+          id: gid,
+          title: group.title || 'Group',
+          kind: 'subgroup',
+          members: (group.members || []).map(function (m) { return m.id || m; }),
+          memberDetails: group.members || [],
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      } else {
+        chatChannels[gid].title = group.title || chatChannels[gid].title;
+        chatChannels[gid].members = (group.members || []).map(function (m) { return m.id || m; });
+        chatChannels[gid].memberDetails = group.members || chatChannels[gid].memberDetails;
+      }
+      if (activeChannelId === gid) {
+        setThreadTitle(chatChannels[gid].title);
+        renderMembersPanel(chatChannels[gid]);
+      }
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    window.__meetIngestGroupChat = function (msg) {
+      var m = msg.message || msg;
+      if (!m || !m.groupId) return;
+      var gid = m.groupId;
+      if (!chatChannels[gid]) {
+        chatChannels[gid] = {
+          id: gid,
+          title: 'Group',
+          kind: 'subgroup',
+          members: [],
+          messages: [],
+          unread: 0,
+          lastText: '',
+          lastAt: 0
+        };
+      }
+      chatChannels[gid].messages.push(m);
+      chatChannels[gid].lastText = m.text || '';
+      chatChannels[gid].lastAt = m.at || Date.now();
+      if (activeChannelId !== gid) chatChannels[gid].unread = (chatChannels[gid].unread || 0) + 1;
+      else {
+        var box = document.getElementById('chatMessages');
+        if (box) appendBubbleToBox(box, m);
+      }
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
 
     var stageChatTop = document.getElementById('stageChatBtnTop');
     if (stageChatTop) stageChatTop.addEventListener('click', function () { togglePanel('chat'); });
@@ -8393,28 +8783,31 @@
       } catch (_) {}
     }, 200);
 
-    // Private chat WS ingest
-    window.__meetIngestPrivate = function (msg) {
-      const m = msg.message || msg;
-      if (!m) return;
-      const selfId = currentMeeting && currentMeeting.participantId;
-      const otherId = m.fromId === selfId ? m.toId : m.fromId;
-      const otherName = m.fromId === selfId ? m.toName : m.fromName;
-      if (!otherId) return;
-      if (!dmStore[otherId]) dmStore[otherId] = { name: otherName || otherId, messages: [], unread: 0 };
-      dmStore[otherId].messages.push(m);
-      dmStore[otherId].lastAt = m.at || Date.now();
-      dmStore[otherId].name = otherName || dmStore[otherId].name;
-      if (window.__dmTargetId !== otherId) dmStore[otherId].unread = (dmStore[otherId].unread || 0) + 1;
-      else openDmThread(otherId, dmStore[otherId].name);
-      const badge = document.getElementById('railChatBadge');
-      if (badge) {
-        const total = Object.values(dmStore).reduce((s, th) => s + (th.unread || 0), 0);
-        badge.textContent = total ? String(total) : '';
-        badge.classList.toggle('hidden', !total);
-      }
-      if (window.__railChatMode === 'dm' && window.__dmTargetId !== otherId) renderDmHome();
-    };
+    // Legacy dmStore bridge — prefer the premium channel inbox (__meetIngestPrivate
+    // is defined earlier in the chatChannels block; only fill gaps for old UI).
+    if (typeof window.__meetIngestPrivate !== 'function') {
+      window.__meetIngestPrivate = function (msg) {
+        const m = msg.message || msg;
+        if (!m) return;
+        const selfId = currentMeeting && currentMeeting.participantId;
+        const otherId = m.fromId === selfId ? m.toId : m.fromId;
+        const otherName = m.fromId === selfId ? m.toName : m.fromName;
+        if (!otherId) return;
+        if (!dmStore[otherId]) dmStore[otherId] = { name: otherName || otherId, messages: [], unread: 0 };
+        dmStore[otherId].messages.push(m);
+        dmStore[otherId].lastAt = m.at || Date.now();
+        dmStore[otherId].name = otherName || dmStore[otherId].name;
+        if (window.__dmTargetId !== otherId) dmStore[otherId].unread = (dmStore[otherId].unread || 0) + 1;
+        else if (typeof openDmThread === 'function') openDmThread(otherId, dmStore[otherId].name);
+        const badge = document.getElementById('railChatBadge');
+        if (badge) {
+          const total = Object.values(dmStore).reduce((s, th) => s + (th.unread || 0), 0);
+          badge.textContent = total ? String(total) : '';
+          badge.classList.toggle('hidden', !total);
+        }
+        if (window.__railChatMode === 'dm' && window.__dmTargetId !== otherId && typeof renderDmHome === 'function') renderDmHome();
+      };
+    }
 
     // Notifications badge on people? use rail - sync notif into list when events happen
     // Bridge: patch addNotification to also update a rail badge if we add notifications slot under room

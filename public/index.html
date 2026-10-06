@@ -424,6 +424,21 @@
               <div id="chatThreadView" class="chat-thread-view hidden">
                 <div class="chat-thread-bar">
                   <button type="button" id="chatThreadBack" class="btn icon-btn" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
+                  <span id="chatThreadTitle" class="chat-thread-title">Chat</span>
+                  <button type="button" id="chatThreadMembersBtn" class="btn icon-btn chat-members-btn hidden" title="Participants"><i class="fa-solid fa-users"></i></button>
+                </div>
+                <div id="chatMembersPanel" class="chat-members-panel hidden">
+                  <div class="chat-members-header">
+                    <span>Participants</span>
+                    <button type="button" id="chatMembersClose" class="btn icon-btn" title="Close"><i class="fa-solid fa-xmark"></i></button>
+                  </div>
+                  <ul id="chatMembersList" class="chat-members-list"></ul>
+                  <div id="chatMembersAddRow" class="chat-members-add host-cohost-only hidden">
+                    <select id="chatMembersAddSelect" class="full-width">
+                      <option value="">Add participant…</option>
+                    </select>
+                    <button type="button" id="chatMembersAddBtn" class="btn small-btn primary-btn">Add</button>
+                  </div>
                 </div>
                 <div class="side-chat" id="sideChat" data-drawer-chat="1">
                   <div class="chat-messages" id="chatMessages"></div>
