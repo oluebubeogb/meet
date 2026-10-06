@@ -838,12 +838,29 @@
       }
       if (msg.type === 'hand-raised' || msg.type === 'hand-lowered' || msg.type === 'hands-cleared') {
         if (msg.raisedHands) raisedHands = msg.raisedHands;
-        if (msg.type === 'hand-lowered' && msg.participantId === currentMeeting?.participantId) {
-          handRaised = false;
-          const rb = document.getElementById('raiseHandBtn');
-          if (rb) { rb.classList.remove('active'); rb.setAttribute('aria-pressed', 'false'); }
+        if (msg.type === 'hand-lowered') {
+          try {
+            const pid = msg.participantId || msg.targetId;
+            const p = (participants || []).find(function (x) { return x.id === pid; });
+            if (typeof window.noteHandLowered === 'function') window.noteHandLowered(pid, p ? p.name : (msg.name || pid));
+          } catch (_) {}
+          if (msg.participantId === currentMeeting?.participantId) {
+            handRaised = false;
+            const rb = document.getElementById('raiseHandBtn');
+            if (rb) { rb.classList.remove('active'); rb.setAttribute('aria-pressed', 'false'); }
+          }
+        }
+        if (msg.type === 'hands-cleared') {
+          try {
+            (participants || []).filter(function (p) { return p.handRaised; }).forEach(function (p) {
+              if (typeof window.noteHandLowered === 'function') window.noteHandLowered(p.id, p.name);
+            });
+          } catch (_) {}
         }
         renderParticipants();
+        try {
+          if (typeof window.fillDynHands === 'function') { try { window.fillDynHands(); } catch(_){} }
+        } catch (_) {}
         return;
       }
       if (msg.type === 'ask-unmute') {
@@ -2601,21 +2618,34 @@
 
   // ----- Theme / layout -----
 
+  function applyTheme(mode) {
+    const dark = mode === 'dark';
+    document.documentElement.classList.toggle('dark', dark);
+    try { localStorage.setItem('meet-theme', dark ? 'dark' : 'light'); } catch (_) {}
+    updateThemeIcon();
+  }
   function initTheme() {
     const saved = localStorage.getItem('meet-theme');
-    if (saved === 'dark') document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-    updateThemeIcon();
+    applyTheme(saved === 'dark' ? 'dark' : 'light');
   }
   function updateThemeIcon() {
-    if (!themeToggle) return;
     const isDark = document.documentElement.classList.contains('dark');
-    themeToggle.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i>' : '<i class="fa-solid fa-moon"></i>';
+    const icon = isDark ? '<i class="fa-solid fa-sun"></i>' : '<i class="fa-solid fa-moon"></i>';
+    const label = isDark ? 'Light mode' : 'Dark mode';
+    if (themeToggle) themeToggle.innerHTML = icon;
+    const acc = document.getElementById('accThemeBtn');
+    if (acc) acc.innerHTML = icon + ' ' + label;
   }
-  themeToggle?.addEventListener('click', () => {
-    document.documentElement.classList.toggle('dark');
-    localStorage.setItem('meet-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
-    updateThemeIcon();
+  function toggleTheme() {
+    const next = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
+    applyTheme(next);
+  }
+  window.__meetToggleTheme = toggleTheme;
+  themeToggle?.addEventListener('click', toggleTheme);
+  document.getElementById('accThemeBtn')?.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleTheme();
   });
   initTheme();
 
@@ -4422,7 +4452,10 @@
       if (typeof openDrawer === 'function') openDrawer('diagDrawer');
       closeMore();
     };
-    document.getElementById('moreConnectionBtn')?.addEventListener('click', openDiag);
+    document.getElementById('moreConnectionBtn')?.addEventListener('click', function () {
+      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
+      else if (typeof openDiag === 'function') openDiag();
+    });
     document.getElementById('liveStatus')?.addEventListener('click', openDiag);
 
     document.getElementById('moreActivityBtn')?.addEventListener('click', () => {
@@ -4584,6 +4617,11 @@
     const closeSec = document.getElementById('securityDrawerClose');
     const backdrop = document.getElementById('securityDrawerBackdrop');
     function openSecurity() {
+      // Prefer col2 dynamic panel
+      if (typeof window.__openDynamicPane === 'function') {
+        window.__openDynamicPane('security', 'Security');
+        return;
+      }
       if (!drawer) return;
       applySecurityToForm(securityState);
       drawer.classList.remove('hidden');
@@ -4597,6 +4635,7 @@
     if (secBtn) secBtn.addEventListener('click', openSecurity);
     if (closeSec) closeSec.addEventListener('click', closeSecurity);
     if (backdrop) backdrop.addEventListener('click', closeSecurity);
+    document.getElementById('mfnSecurity')?.addEventListener('click', openSecurity);
 
     const secIds = ['secWaitingRoom','secGuestAccess','secLocked','secScreenShare','secMicrophone','secChat','secReactions','secRaiseHand','secPartInvite','secGuestInvite'];
     secIds.forEach((id) => {
@@ -5747,7 +5786,8 @@
       var titleEl = document.getElementById('dynamicPanelTitle');
       if (titleEl) titleEl.textContent = title || ({
         screens: 'Screens', chat: 'Chat', people: 'People',
-        reactions: 'Reactions', security: 'Security', more: 'More'
+        reactions: 'Reactions', security: 'Security', more: 'More',
+        activity: 'Meeting activity', connection: 'Connection', hands: 'Hands'
       }[activePane] || 'Panel');
       document.querySelectorAll('.dyn-pane').forEach(function (p) {
         var on = p.getAttribute('data-pane') === activePane;
@@ -5763,7 +5803,7 @@
       // Prevent people list from leaking into other panes
       if (activePane !== 'people') {
         var dp = document.getElementById('dynPanePeople');
-        if (dp && activePane !== 'people') {
+        if (dp) {
           dp.classList.add('hidden');
           dp.style.display = 'none';
         }
@@ -5788,6 +5828,9 @@
       if (activePane === 'more') fillDynMore();
       if (activePane === 'security') fillDynSecurity();
       if (activePane === 'reactions') renderRecentReactions();
+      if (activePane === 'activity') fillDynActivity();
+      if (activePane === 'connection') fillDynConnection();
+      if (activePane === 'hands') fillDynHands();
     }
     window.__openDynamicPane = openDynamicPane;
 
@@ -5869,12 +5912,43 @@
       btn.addEventListener('pointercancel', function () { if (timer) clearTimeout(timer); timer = null; });
     })();
 
-    function openRaisedHandsPanel() {
-      openDynamicPane('people', 'Raised hands');
-      var pane = document.getElementById('dynPanePeople');
+    // Track recently lowered hands (most recent first)
+    var loweredHandsLog = [];
+    window.__loweredHandsLog = loweredHandsLog;
+    function noteHandLowered(id, name) {
+      if (!id) return;
+      loweredHandsLog = loweredHandsLog.filter(function (x) { return x.id !== id; });
+      loweredHandsLog.unshift({ id: id, name: name || id, at: Date.now() });
+      if (loweredHandsLog.length > 40) loweredHandsLog.length = 40;
+      window.__loweredHandsLog = loweredHandsLog;
+    }
+    window.noteHandLowered = noteHandLowered;
+    // When raisedHands updates, detect lowers
+    var _prevRaisedIds = {};
+    function syncLoweredFromRaised() {
+      var cur = {};
+      (raisedHands || []).forEach(function (h) {
+        var id = h.participantId || h.id || h;
+        if (id) cur[id] = true;
+      });
+      (participants || []).forEach(function (p) {
+        if (p.handRaised) cur[p.id] = true;
+      });
+      Object.keys(_prevRaisedIds).forEach(function (id) {
+        if (!cur[id]) {
+          var p = (participants || []).find(function (x) { return x.id === id; });
+          noteHandLowered(id, p ? p.name : id);
+        }
+      });
+      _prevRaisedIds = cur;
+    }
+
+    function fillDynHands() {
+      var pane = document.getElementById('dynPaneHands');
       if (!pane) return;
+      try { syncLoweredFromRaised(); } catch (_) {}
       var raised = (participants || []).filter(function (p) { return p.handRaised; });
-      // Order: earliest raised first if raisedHands array exists
+      // Order: earliest raised first
       if (Array.isArray(raisedHands) && raisedHands.length) {
         var order = {};
         raisedHands.forEach(function (h, i) {
@@ -5882,34 +5956,122 @@
           order[id] = i;
         });
         raised.sort(function (a, b) {
-          var ia = order[a.id];
-          var ib = order[b.id];
-          if (ia == null) ia = 999;
-          if (ib == null) ib = 999;
+          var ia = order[a.id]; var ib = order[b.id];
+          if (ia == null) ia = 999; if (ib == null) ib = 999;
           return ia - ib;
         });
       }
       var hostLike = myRole === 'host' || myRole === 'cohost' || (currentMeeting && currentMeeting.isHost);
+      var raisedIds = {};
+      raised.forEach(function (p) { raisedIds[p.id] = true; });
+      var lowered = loweredHandsLog.filter(function (x) { return !raisedIds[x.id]; });
+      // most recent on top already
+
       var html = '<div class="raised-hands-panel">';
+      html += '<div class="rh-section-title">Raised hands</div>';
       if (!raised.length) html += '<p class="st-empty">No raised hands</p>';
       else {
         raised.forEach(function (p) {
           html += '<div class="rh-row" data-id="' + escapeHtml(p.id) + '">' +
-            '<span class="rh-name">' + escapeHtml(p.name) + '</span>';
+            '<span class="rh-name">' + escapeHtml(p.name || p.id) + '</span>';
           if (hostLike) {
             html += '<button type="button" class="btn small-btn rh-lower" data-id="' + escapeHtml(p.id) + '">Lower</button>';
           }
           html += '</div>';
         });
       }
+      html += '<hr class="rh-sep">';
+      html += '<div class="rh-section-title">Lowered hands</div>';
+      if (!lowered.length) html += '<p class="st-empty">No recently lowered hands</p>';
+      else {
+        lowered.forEach(function (p) {
+          html += '<div class="rh-row rh-lowered" data-id="' + escapeHtml(p.id) + '">' +
+            '<span class="rh-name">' + escapeHtml(p.name || p.id) + '</span></div>';
+        });
+      }
       html += '</div>';
       pane.innerHTML = html;
       pane.querySelectorAll('.rh-lower').forEach(function (b) {
         b.addEventListener('click', function () {
-          try { sendWS({ type: 'lower-hand', targetId: b.getAttribute('data-id') }); } catch (_) {}
-          setTimeout(openRaisedHandsPanel, 200);
+          var id = b.getAttribute('data-id');
+          var p = (participants || []).find(function (x) { return x.id === id; });
+          noteHandLowered(id, p ? p.name : id);
+          try { sendWS({ type: 'lower-hand', targetId: id }); } catch (_) {}
+          setTimeout(fillDynHands, 200);
         });
       });
+    }
+
+    function openRaisedHandsPanel() {
+      openDynamicPane('hands', 'Hands');
+      fillDynHands();
+    }
+    window.openRaisedHandsPanel = openRaisedHandsPanel;
+    window.fillDynHands = fillDynHands;
+    window.fillDynActivity = fillDynActivity;
+    window.fillDynConnection = fillDynConnection;
+
+    function fillDynActivity() {
+      var pane = document.getElementById('dynPaneActivity');
+      if (!pane) return;
+      pane.innerHTML = '<ul class="activity-list" id="dynActivityList"></ul><p class="empty-hint" id="dynActivityEmpty">No activity yet.</p>';
+      try {
+        if (typeof loadActivity === 'function') loadActivity();
+        else if (typeof renderActivityList === 'function') renderActivityList();
+      } catch (_) {}
+      // Mirror activity list into dyn pane
+      var srcList = document.getElementById('activityList');
+      var srcEmpty = document.getElementById('activityEmpty');
+      var dstList = document.getElementById('dynActivityList');
+      var dstEmpty = document.getElementById('dynActivityEmpty');
+      if (srcList && dstList) {
+        dstList.innerHTML = srcList.innerHTML;
+        if (dstEmpty && srcEmpty) {
+          dstEmpty.classList.toggle('hidden', srcEmpty.classList.contains('hidden') || (srcList.children.length > 0));
+          if (srcList.children.length > 0) dstEmpty.classList.add('hidden');
+        }
+      }
+      // Also render from activityEntries if available
+      if (typeof activityEntries !== 'undefined' && activityEntries && activityEntries.length && dstList) {
+        var items = activityEntries.slice().reverse();
+        dstList.innerHTML = items.map(function (e) {
+          var label = (typeof formatActivityLabel === 'function') ? formatActivityLabel(e) : (e.type || 'event');
+          return '<li><span class="act-dot"></span> ' + escapeHtml(label) + '</li>';
+        }).join('');
+        if (dstEmpty) dstEmpty.classList.add('hidden');
+      }
+    }
+
+    function fillDynConnection() {
+      var pane = document.getElementById('dynPaneConnection');
+      if (!pane) return;
+      // Pull live diag content if present
+      var diagBody = document.querySelector('#diagDrawer .drawer-body');
+      var html = '';
+      if (diagBody) {
+        html = diagBody.innerHTML;
+      } else {
+        html = '<div class="diag-status"><span class="diag-dot good"></span><span>Connected</span></div>';
+      }
+      // Add live connection info
+      var wsState = 'unknown';
+      try {
+        var dot = document.querySelector('.ws-dot');
+        if (dot) {
+          if (dot.classList.contains('connected')) wsState = 'Connected';
+          else if (dot.classList.contains('connecting')) wsState = 'Connecting…';
+          else if (dot.classList.contains('error')) wsState = 'Disconnected';
+        }
+      } catch (_) {}
+      var lkState = (typeof room !== 'undefined' && room && room.state) ? String(room.state) : '—';
+      var extra = '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
+        '<div><strong>Signaling:</strong> ' + escapeHtml(wsState) + '</div>' +
+        '<div><strong>Media (LiveKit):</strong> ' + escapeHtml(lkState) + '</div>' +
+        '<div><strong>Participants:</strong> ' + ((participants || []).length) + '</div>' +
+        '</div>';
+      pane.innerHTML = html + extra;
+      try { if (typeof openDiag === 'function') { /* refresh metrics without opening drawer */ } } catch (_) {}
+      try { if (typeof refreshDiag === 'function') refreshDiag(); } catch (_) {}
     }
 
     window.__updateNavBadges = function updateNavBadges() {
@@ -7205,83 +7367,237 @@
     }
 
     // --- MediaRecorder capture (host) ---
+    // Captures screen (with system/tab audio when shared) + mic, mixes via AudioContext.
+    // Always downloads to device on stop so recordings survive without server storage.
+    let __recAudioCtx = null;
+    let __recStreams = [];
+
+    function __cleanupRecStreams() {
+      try {
+        (__recStreams || []).forEach(function (st) {
+          try { st.getTracks().forEach(function (tr) { tr.stop(); }); } catch (_) {}
+        });
+      } catch (_) {}
+      __recStreams = [];
+      if (__recAudioCtx) {
+        try { __recAudioCtx.close(); } catch (_) {}
+        __recAudioCtx = null;
+      }
+    }
+
     async function startClientCapture(options) {
       try {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
+        // Allow restart: stop any leftover recorder first
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          try {
+            mediaRecorder.onstop = null;
+            mediaRecorder.stop();
+          } catch (_) {}
+          mediaRecorder = null;
+        }
+        __cleanupRecStreams();
         recordedChunks = [];
-        const streams = [];
-        try {
-          if (!options || options.audio !== false) {
-            const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            streams.push(a);
-          }
-        } catch (e) {
-          console.warn('rec audio', e);
-        }
-        try {
-          if (!options || options.screenShare !== false || options.video !== false) {
-            const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-            streams.push(s);
-            s.getVideoTracks().forEach((tr) => {
-              tr.addEventListener('ended', () => {
-                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                  try { mediaRecorder.stop(); } catch (_) {}
-                }
-              });
+        window.__clientRecorder = null;
+
+        const wantMic = !options || options.audio !== false;
+        const wantScreen = !options || options.screenShare !== false || options.video !== false;
+
+        let displayStream = null;
+        let micStream = null;
+
+        if (wantScreen) {
+          try {
+            // Prefer system/tab audio + video (Chrome: share tab/window with "Share audio")
+            displayStream = await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: 30, displaySurface: 'monitor' },
+              audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                suppressLocalAudioPlayback: false
+              },
+              // Prefer current tab with audio when available
+              preferCurrentTab: false,
+              selfBrowserSurface: 'include',
+              systemAudio: 'include'
             });
+          } catch (e1) {
+            try {
+              displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            } catch (e2) {
+              console.warn('rec display', e2);
+            }
           }
-        } catch (e) {
-          console.warn('rec display', e);
         }
-        if (!streams.length) {
+
+        if (wantMic) {
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+              },
+              video: false
+            });
+          } catch (e) {
+            console.warn('rec mic', e);
+          }
+        }
+
+        if (!displayStream && !micStream) {
           if (typeof showToast === 'function') showToast('Could not access mic/screen for recording');
           return;
         }
+
+        __recStreams = [displayStream, micStream].filter(Boolean);
+
         const mixed = new MediaStream();
-        streams.forEach((st) => st.getTracks().forEach((tr) => mixed.addTrack(tr)));
-        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-          ? 'video/webm;codecs=vp9,opus'
-          : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
-        const recOpts = mime ? { mimeType: mime } : {};
+        // Video from display
+        if (displayStream) {
+          displayStream.getVideoTracks().forEach(function (tr) {
+            mixed.addTrack(tr);
+            tr.addEventListener('ended', function () {
+              if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                try { stopAndSaveRecording(); } catch (_) {
+                  try { mediaRecorder.stop(); } catch (__) {}
+                }
+              }
+            });
+          });
+        }
+
+        // Mix audio: system/tab audio + mic via AudioContext for reliable capture
+        const hasDispAudio = displayStream && displayStream.getAudioTracks().length > 0;
+        const hasMicAudio = micStream && micStream.getAudioTracks().length > 0;
+        if (hasDispAudio || hasMicAudio) {
+          try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            __recAudioCtx = new AudioCtx();
+            const dest = __recAudioCtx.createMediaStreamDestination();
+            if (hasDispAudio) {
+              const src = __recAudioCtx.createMediaStreamSource(displayStream);
+              const g = __recAudioCtx.createGain();
+              g.gain.value = 1.0;
+              src.connect(g); g.connect(dest);
+            }
+            if (hasMicAudio) {
+              const src = __recAudioCtx.createMediaStreamSource(micStream);
+              const g = __recAudioCtx.createGain();
+              g.gain.value = 1.0;
+              src.connect(g); g.connect(dest);
+            }
+            dest.stream.getAudioTracks().forEach(function (tr) { mixed.addTrack(tr); });
+          } catch (mixErr) {
+            console.warn('audio mix failed, adding tracks directly', mixErr);
+            if (displayStream) displayStream.getAudioTracks().forEach(function (tr) { mixed.addTrack(tr); });
+            if (micStream) micStream.getAudioTracks().forEach(function (tr) { mixed.addTrack(tr); });
+          }
+        }
+
+        const mimeCandidates = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp9',
+          'video/webm',
+          'video/mp4'
+        ];
+        let mime = '';
+        for (let i = 0; i < mimeCandidates.length; i++) {
+          if (MediaRecorder.isTypeSupported(mimeCandidates[i])) { mime = mimeCandidates[i]; break; }
+        }
+        const recOpts = mime ? { mimeType: mime, videoBitsPerSecond: 2500000 } : { videoBitsPerSecond: 2500000 };
         mediaRecorder = new MediaRecorder(mixed, recOpts);
-        mediaRecorder.ondataavailable = (e) => {
+        mediaRecorder.ondataavailable = function (e) {
           if (e.data && e.data.size) recordedChunks.push(e.data);
         };
-        mediaRecorder.onstop = () => {
+        mediaRecorder.onstop = function () {
           try {
             downloadRecordingChunks(mime || 'video/webm');
           } catch (err) {
             console.warn('rec onstop', err);
           }
-          streams.forEach((st) => {
-            try { st.getTracks().forEach((tr) => tr.stop()); } catch (_) {}
-          });
+          __cleanupRecStreams();
           mediaRecorder = null;
           window.__clientRecorder = null;
         };
+        mediaRecorder.onerror = function (ev) {
+          console.warn('MediaRecorder error', ev);
+          if (typeof showToast === 'function') showToast('Recording error — try stopping and starting again');
+        };
+        // timeslice so we always have chunks even if stop is flaky
         mediaRecorder.start(1000);
         window.__clientRecorder = mediaRecorder;
-        if (typeof showToast === 'function') showToast('Local recording capture started');
+        if (typeof showToast === 'function') {
+          const audioHint = hasDispAudio
+            ? 'Capturing screen + system audio + mic'
+            : (hasMicAudio ? 'Capturing screen + mic (share a tab with audio for system sound)' : 'Capturing video only');
+          showToast(audioHint);
+        }
       } catch (e) {
         console.warn('startClientCapture', e);
+        __cleanupRecStreams();
+        mediaRecorder = null;
         if (typeof showToast === 'function') showToast('Recording capture failed: ' + (e.message || e));
       }
     }
 
     function downloadRecordingChunks(mime) {
-      if (!recordedChunks.length) return;
+      if (!recordedChunks || !recordedChunks.length) {
+        if (typeof showToast === 'function') showToast('No recording data to save');
+        return;
+      }
       const blob = new Blob(recordedChunks, { type: mime || 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
       const code = (currentMeeting && currentMeeting.code) || 'meet';
-      a.download = 'meet-' + code + '-' + Date.now() + '.webm';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = 'meet-' + code + '-' + stamp + '.webm';
+      // Primary: anchor download to device
+      try {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+          try { a.remove(); } catch (_) {}
+          try { URL.revokeObjectURL(url); } catch (_) {}
+        }, 15000);
+      } catch (e) {
+        console.warn('anchor download failed', e);
+      }
+      // Fallback: open blob in new tab so user can save manually
+      try {
+        if (blob.size > 0) {
+          const url2 = URL.createObjectURL(blob);
+          // keep a reference so GC doesn't reclaim before user saves
+          window.__lastRecordingBlobUrl = url2;
+          window.__lastRecordingBlob = blob;
+          window.__lastRecordingName = filename;
+        }
+      } catch (_) {}
+      // Optional: IndexedDB stash for recovery
+      try {
+        if (window.indexedDB && blob.size > 0) {
+          const req = indexedDB.open('meet-recordings', 1);
+          req.onupgradeneeded = function () {
+            const db = req.result;
+            if (!db.objectStoreNames.contains('clips')) db.createObjectStore('clips', { keyPath: 'id' });
+          };
+          req.onsuccess = function () {
+            try {
+              const db = req.result;
+              const tx = db.transaction('clips', 'readwrite');
+              tx.objectStore('clips').put({ id: filename, blob: blob, at: Date.now(), code: code });
+            } catch (_) {}
+          };
+        }
+      } catch (_) {}
       recordedChunks = [];
-      if (typeof showToast === 'function') showToast('Recording downloaded');
+      if (typeof showToast === 'function') {
+        showToast('Recording saved to your device (' + Math.round(blob.size / 1024) + ' KB)');
+      }
     }
 
     function pauseClientCapture() {
@@ -7300,6 +7616,7 @@
           mediaRecorder.stop(); // triggers onstop → download
         } else if (recordedChunks.length) {
           downloadRecordingChunks('video/webm');
+          __cleanupRecStreams();
         }
       } catch (_) {}
     }
@@ -7316,21 +7633,36 @@
     }
 
     function stopAndSaveRecording() {
-      // Download local media, then notify server
+      // Download local media, then notify server — allow a fresh start afterward
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        const orig = mediaRecorder.onstop;
         mediaRecorder.onstop = function () {
           try { downloadRecordingChunks('video/webm'); } catch (_) {}
+          __cleanupRecStreams();
           safeSend({ type: 'stop-recording' });
           mediaRecorder = null;
           window.__clientRecorder = null;
+          // Clear recordingState locally so UI allows a new recording immediately
+          try {
+            if (recordingState) recordingState = Object.assign({}, recordingState, { status: 'stopped' });
+          } catch (_) {}
         };
+        try {
+          if (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused') {
+            mediaRecorder.requestData && mediaRecorder.requestData();
+          }
+        } catch (_) {}
         try { mediaRecorder.stop(); } catch (_) {
           safeSend({ type: 'stop-recording' });
+          if (recordedChunks.length) downloadRecordingChunks('video/webm');
+          __cleanupRecStreams();
+          mediaRecorder = null;
         }
       } else {
         safeSend({ type: 'stop-recording' });
         if (recordedChunks.length) downloadRecordingChunks('video/webm');
+        __cleanupRecStreams();
+        mediaRecorder = null;
+        window.__clientRecorder = null;
       }
     }
 
@@ -8611,11 +8943,22 @@
         if (el) el.onclick = fn;
       }
       if (name === 'security') {
+        // Open security in col2 dynamic panel instead of empty side mount
+        try {
+          if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
+          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+        } catch (_) {}
         var mount = document.getElementById('securityPanelMount');
-        var src = document.getElementById('dynPaneSecurity');
-        if (mount && src && !mount.dataset.filled) {
-          mount.innerHTML = src.innerHTML;
-          mount.dataset.filled = '1';
+        if (mount) {
+          // Keep side tab in sync if user navigated via rail
+          try {
+            if (typeof fillDynSecurity === 'function') {
+              // fill into dyn pane first, then clone
+              fillDynSecurity();
+              var src = document.getElementById('dynPaneSecurity');
+              if (src) mount.innerHTML = src.innerHTML;
+            }
+          } catch (_) {}
         }
       }
       if (name === 'more') {
@@ -8693,19 +9036,35 @@
           try { navigator.clipboard.writeText(link); } catch (_) {}
         });
         bindClick('roomHandBtn', function () {
-          var h = document.getElementById('handBtn') || document.getElementById('raiseHandBtn');
-          if (h) h.click();
+          if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
+          else if (typeof openDynamicPane === 'function') openDynamicPane('hands', 'Hands');
+        });
+        bindClick('roomSecurityBtn', function () {
+          if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
+          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+        });
+        bindClick('roomActivityBtn', function () {
+          if (typeof openDynamicPane === 'function') openDynamicPane('activity', 'Meeting activity');
+          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('activity', 'Meeting activity');
+        });
+        bindClick('roomConnectionBtn', function () {
+          if (typeof openDynamicPane === 'function') openDynamicPane('connection', 'Connection');
+          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
         });
         bindClick('roomMuteAllBtn', function () { muteAll(); });
         document.querySelectorAll('#roomTab .rail-open-panel').forEach(function (b) {
           b.onclick = function () {
             var g = b.getAttribute('data-goto');
+            if (g === 'security') {
+              if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
+              return;
+            }
             if (g) { openPanel = null; togglePanel(g); }
           };
         });
       }
       if (name === 'account') {
-        bindClick('accThemeBtn', function () { var e = document.getElementById('themeToggle'); if (e) e.click(); });
+        bindClick('accThemeBtn', function () { if (typeof window.__meetToggleTheme === 'function') window.__meetToggleTheme(); else document.getElementById('themeToggle')?.click(); });
         bindClick('accHistoryBtn', function () { var e = document.getElementById('historyBtn'); if (e) e.click(); });
         bindClick('accAuthBtn', function () {
           var a = document.getElementById('loginBtn') || document.getElementById('logoutBtn');
@@ -8764,7 +9123,7 @@
     });
 
     // Account / media / room buttons
-    document.getElementById('accThemeBtn')?.addEventListener('click', () => document.getElementById('themeToggle')?.click());
+    document.getElementById('accThemeBtn')?.addEventListener('click', () => { if (typeof window.__meetToggleTheme === 'function') window.__meetToggleTheme(); else document.getElementById('themeToggle')?.click(); });
     document.getElementById('accHistoryBtn')?.addEventListener('click', () => document.getElementById('historyBtn')?.click());
     document.getElementById('accAuthBtn')?.addEventListener('click', () => {
       document.getElementById('loginBtn')?.click() || document.getElementById('logoutBtn')?.click();
@@ -8794,8 +9153,20 @@
       if (inp) { try { navigator.clipboard.writeText(inp.value); if (typeof showToast === 'function') showToast('Copied'); } catch (_) {} }
     });
     document.getElementById('roomHandBtn')?.addEventListener('click', () => {
-      document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
-      refreshRoomRaised();
+      if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
+      else {
+        document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
+        refreshRoomRaised();
+      }
+    });
+    document.getElementById('roomSecurityBtn')?.addEventListener('click', () => {
+      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+    });
+    document.getElementById('roomActivityBtn')?.addEventListener('click', () => {
+      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('activity', 'Meeting activity');
+    });
+    document.getElementById('roomConnectionBtn')?.addEventListener('click', () => {
+      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
     });
     document.getElementById('roomMuteAllBtn')?.addEventListener('click', muteAll);
     document.getElementById('peopleMuteAllBtn')?.addEventListener('click', muteAll);
@@ -8961,24 +9332,50 @@
       openDmThread(targetId, dmStore[targetId].name);
     });
 
-    // Stage footer
+    // Stage chrome hover: top controls (timer/record/chat/leave) + footer emoji row together
     let hideTimer = null;
     const stage = document.getElementById('bigView') || document.querySelector('.big-view') || document.getElementById('col2');
     const footer = document.getElementById('stageHoverChrome');
-    function showFooter() {
-      if (!footer) return;
-      footer.classList.remove('hidden');
-      footer.classList.add('visible');
+    const topChrome = document.getElementById('stageTopChrome');
+    function showStageChrome() {
+      if (footer) {
+        footer.classList.remove('hidden');
+        footer.classList.add('visible');
+      }
+      if (topChrome) topChrome.classList.add('visible');
       clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => footer.classList.remove('visible'), 2200);
+      hideTimer = setTimeout(function () {
+        footer && footer.classList.remove('visible');
+        topChrome && topChrome.classList.remove('visible');
+      }, 2200);
+    }
+    function hideStageChromeSoon() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () {
+        footer && footer.classList.remove('visible');
+        topChrome && topChrome.classList.remove('visible');
+      }, 400);
     }
     if (stage) {
-      stage.addEventListener('mousemove', showFooter);
-      stage.addEventListener('mouseleave', () => {
-        clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => footer?.classList.remove('visible'), 400);
-      });
+      stage.addEventListener('mousemove', showStageChrome);
+      stage.addEventListener('mouseenter', showStageChrome);
+      stage.addEventListener('mouseleave', hideStageChromeSoon);
+      // Keep visible while interacting with chrome itself
+      topChrome && topChrome.addEventListener('mouseenter', showStageChrome);
+      topChrome && topChrome.addEventListener('mousemove', showStageChrome);
+      footer && footer.addEventListener('mouseenter', showStageChrome);
+      footer && footer.addEventListener('mousemove', showStageChrome);
     }
+    document.getElementById('stageLeaveBtn')?.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof leaveMeeting === 'function') leaveMeeting();
+      else document.getElementById('leaveBtn')?.click();
+    });
+    document.getElementById('stageChatBtnTop')?.addEventListener('click', function () {
+      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('chat', 'Chat');
+      else document.getElementById('toolbarChatBtn')?.click();
+    });
     let lastRxClick = 0;
     document.getElementById('stageReactRow')?.addEventListener('click', (e) => {
       const btn = e.target.closest('.emoji-btn');
@@ -9037,11 +9434,32 @@
         b.addEventListener('click', () => { try { it.el?.click(); } catch (_) {} });
         cluster.appendChild(b);
       });
-      // idle background vs share
+      // idle background vs share — only hide artwork when a live share video is on stage
       const big = document.getElementById('bigView') || document.querySelector('.big-view');
-      if (big) big.classList.toggle('has-active-share', sharers.length > 0);
+      if (big) {
+        const liveVid = big.querySelector('video, canvas');
+        const hasLiveMedia = !!(liveVid && liveVid.offsetParent !== null && (liveVid.tagName !== 'VIDEO' || liveVid.srcObject || liveVid.src));
+        const active = sharers.length > 0 && hasLiveMedia;
+        big.classList.toggle('has-active-share', active);
+        const ph = document.getElementById('bigPlaceholder');
+        if (ph) {
+          if (active) ph.classList.add('hidden');
+          else {
+            ph.classList.remove('hidden');
+            ph.classList.add('stage-idle-bg');
+          }
+        }
+      }
     }
     setInterval(refreshStageCards, 1500);
+    // Ensure placeholder background is visible when meeting starts (joiners)
+    try {
+      const ph0 = document.getElementById('bigPlaceholder');
+      if (ph0) {
+        ph0.classList.add('stage-idle-bg');
+        ph0.classList.remove('hidden');
+      }
+    } catch (_) {}
 
     // Talking wavelength via LiveKit audio levels when available
     setInterval(() => {

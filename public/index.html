@@ -571,14 +571,12 @@
             <!-- ROOM TAB -->
             <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
               <div class="panel-block media-panel-block">
-                <button type="button" class="more-item media-row-item rail-open-panel" data-goto="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
+                <button type="button" class="more-item media-row-item" id="roomSecurityBtn" data-pane="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
                 <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn"><i class="fa-solid fa-link"></i> Copy link</button>
                 <div id="roomLinkBox" class="room-link-box hidden"><input id="roomLinkInput" readonly><button type="button" id="roomLinkCopy" class="btn small-btn">Copy</button></div>
-                <button type="button" class="more-item media-row-item" id="roomHandBtn"><i class="fa-solid fa-hand"></i> Hand</button>
-                <div id="roomRaisedBlock" class="room-raised-block">
-                  <div class="quiet-label">Raised</div>
-                  <ul id="roomRaisedList" class="participant-list raised-list"></ul>
-                </div>
+                <button type="button" class="more-item media-row-item" id="roomHandBtn" data-pane="hands"><i class="fa-solid fa-hand"></i> Hand</button>
+                <button type="button" class="more-item media-row-item" id="roomActivityBtn" data-pane="activity"><i class="fa-solid fa-list"></i> Meeting activity</button>
+                <button type="button" class="more-item media-row-item" id="roomConnectionBtn" data-pane="connection"><i class="fa-solid fa-signal"></i> Connection</button>
                 <button type="button" class="more-item media-row-item" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
               </div>
             </div>
@@ -704,16 +702,15 @@
                   </button>
                 </div>
               </div>
-              <div class="stage-top-chrome" id="stageTopChrome">
+              <div class="stage-top-chrome stage-hover-chrome" id="stageTopChrome">
               <span id="meetingDurationTimer" class="meeting-duration-timer stage-timer" title="Duration">00:00</span>
               <span id="recMiniControls" class="rec-mini-controls">
                 <button type="button" id="stageRecordBtn" class="stage-chrome-btn" title="Record"><i class="fa-solid fa-circle" style="color:#e5484d;font-size:0.55rem"></i></button>
                 <button type="button" id="recPauseBtn" class="rec-mini-btn hidden" title="Pause"><i class="fa-solid fa-pause"></i></button>
-                <span class="rec-mini-hover">
-                  <button type="button" id="recStopBtn" class="rec-mini-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
-                </span>
+                <button type="button" id="recStopBtn" class="rec-mini-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
               </span>
               <button type="button" id="stageChatBtnTop" class="stage-chrome-btn stage-timer" title="Chat"><i class="fa-regular fa-comments"></i></button>
+              <button type="button" id="stageLeaveBtn" class="stage-chrome-btn stage-leave-btn" title="Leave meeting" aria-label="Leave meeting"><i class="fa-solid fa-phone-slash"></i></button>
               <div class="stage-cards-cluster" id="stageCardsCluster"></div>
             </div>
             <div class="stage-hover-footer hidden" id="stageHoverChrome">
@@ -788,6 +785,9 @@
                   </div>
                 </div>
                 <div class="dyn-pane hidden" data-pane="security" id="dynPaneSecurity"></div>
+                <div class="dyn-pane hidden" data-pane="activity" id="dynPaneActivity"></div>
+                <div class="dyn-pane hidden" data-pane="connection" id="dynPaneConnection"></div>
+                <div class="dyn-pane hidden" data-pane="hands" id="dynPaneHands"></div>
                 <div class="dyn-pane hidden" data-pane="more" id="dynPaneMore"></div>
               </div>
             </div>
