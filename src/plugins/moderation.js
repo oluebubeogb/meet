@@ -392,5 +392,27 @@ module.exports = {
       broadcast(meetingCode, { type: 'security-state', security: { maxParticipants: max } });
     });
 
+
+    ctx.onWs('mute-all', ({ participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || (actor.role !== 'host' && actor.role !== 'cohost')) return;
+      const { broadcast, sendToParticipant } = ctx;
+      for (const [pid, p] of meeting.participants) {
+        if (pid === participantId) continue;
+        if (p.status !== 'ACTIVE') continue;
+        if (p.role === 'host') continue;
+        p.mutedByHost = true;
+        sendToParticipant(pid, {
+          type: 'force-mute',
+          byName: actor.name,
+          byId: participantId,
+        });
+      }
+      broadcast(meetingCode, { type: 'toast', message: 'Everyone muted by ' + (actor.name || 'host') });
+      if (ctx.logActivity) {
+        try { ctx.logActivity(meeting, 'mute_all', actor); } catch (_) {}
+      }
+    });
+
   },
 };

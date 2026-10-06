@@ -1509,7 +1509,7 @@
     // restore default placeholder text
     if (bigPlaceholder) {
       const p = bigPlaceholder.querySelector('p');
-      if (p) p.textContent = 'Welcome ❤️'; p.className = 'welcome-caveat';
+      if (p) p.textContent = ''; /* idle art via CSS */;
     }
     const contentView = document.getElementById('contentView');
     if (contentView) contentView.classList.add('hidden');
@@ -1759,6 +1759,21 @@
         : '<i class="fa-solid fa-microphone-slash"></i><span>Mic</span>';
       micBtn.title = micOn ? 'Mute microphone (M)' : 'Unmute microphone (M)';
     }
+    try {
+      const rail = document.getElementById('railMicBtn') || document.querySelector('[data-panel="media"]');
+      const mediaLabel = document.getElementById('mediaMicLabel');
+      const mediaToggle = document.getElementById('mediaMicToggle');
+      if (mediaLabel) mediaLabel.textContent = micOn ? 'Mic on' : 'Mic off';
+      if (mediaToggle) {
+        mediaToggle.innerHTML = micOn
+          ? '<i class="fa-solid fa-microphone"></i> <span id="mediaMicLabel">Mic on</span>'
+          : '<i class="fa-solid fa-microphone-slash"></i> <span id="mediaMicLabel">Mic off</span>';
+      }
+      document.querySelectorAll('#stageMicBtn').forEach((b) => {
+        b.textContent = micOn ? '🎤' : '🔇';
+        b.title = micOn ? 'Mute' : 'Unmute';
+      });
+    } catch (_) {}
     // Mobile/tablet footer mic must mirror state immediately (host force-mute etc.)
     var mfnMic = document.getElementById('mfnMic');
     if (mfnMic) {
@@ -1975,9 +1990,21 @@
 
       li.innerHTML = `
         ${deviceHtml}
-        <span class="p-name">${escapeHtml(p.name)}${p.id === myId ? ' <span class="me-tag">(you)</span>' : ''}${roleHtml}${handHtml}${muteTag}</span>
+        <span class="p-name">${escapeHtml(p.name)}${p.id === myId ? ' <span class="me-tag">(you)</span>' : ''}${roleHtml}${handHtml}${muteTag}<span class="p-wave hidden" data-wave-for="${escapeHtml(p.id)}"><span></span><span></span><span></span></span></span>
         ${p.sharing ? '<span class="live-dot" title="Sharing screen" aria-label="Sharing"></span>' : ''}
       `;
+      if (p.id !== myId) {
+        const pm = document.createElement('button');
+        pm.type = 'button';
+        pm.className = 'btn icon-btn pm-btn';
+        pm.title = 'Private message';
+        pm.innerHTML = '<i class="fa-regular fa-envelope"></i>';
+        pm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (typeof window.__meetOpenDm === 'function') window.__meetOpenDm(p.id, p.name);
+        });
+        li.appendChild(pm);
+      }
 
       if (p.id !== myId && (canModerate || opts.waiting || isHostLike())) {
         const more = document.createElement('button');
@@ -3215,9 +3242,17 @@
   function showReaction(msg) {
     const overlay = $('reactionOverlay');
     if (!overlay) return;
+    // debounce identical emoji+from within 400ms to prevent doubles
+    const key = String(msg.fromId || msg.from || '') + '|' + String(msg.emoji || '');
+    const now = Date.now();
+    if (!window.__rxDedup) window.__rxDedup = {};
+    if (window.__rxDedup[key] && now - window.__rxDedup[key] < 450) return;
+    window.__rxDedup[key] = now;
     const el = document.createElement('div');
     el.className = 'flying-reaction';
-    el.textContent = msg.emoji || '👍';
+    const name = msg.fromName || msg.from || msg.name || '';
+    el.innerHTML = '<span class="rx-emoji">' + (msg.emoji || '👍') + '</span>' +
+      (name ? '<span class="rx-name">' + escapeHtml(String(name)) + '</span>' : '');
     el.style.left = (20 + Math.random() * 60) + '%';
     overlay.appendChild(el);
     setTimeout(function () { el.remove(); }, 2100);
@@ -7695,61 +7730,57 @@
 
 
 
-  // ========== Slim rail UI controller ==========
+
+  // ========== Slim rail UI controller (7-slot) ==========
   (function meetRailUI() {
     const drawer = document.getElementById('meetSideDrawer');
     const rail = document.getElementById('meetIconRail');
     if (!rail) return;
     let openPanel = null;
+    const dmStore = {}; // targetId -> { name, messages: [], unread }
 
-    function showPanel(name) {
-      // map private → chat with private mode
-      const tabName = name === 'private' ? 'chat' : name;
-      if (name === 'private') {
-        const sel = document.getElementById('privateChatTarget');
-        if (sel) sel.classList.remove('hidden');
-        try {
-          if (typeof window.__meetChatMode === 'function') { /* mode via click sim */ }
-        } catch (_) {}
-        // force private mode flag
-        window.__railChatMode = 'private';
-      } else if (name === 'chat') {
-        const sel = document.getElementById('privateChatTarget');
-        if (sel) sel.classList.add('hidden');
-        window.__railChatMode = 'public';
-      }
+    function isHostLike() {
+      try {
+        return myRole === 'host' || myRole === 'cohost' || !!(currentMeeting && currentMeeting.isHost);
+      } catch (_) { return false; }
+    }
+
+    function showTab(name) {
       document.querySelectorAll('.side-tab-panel').forEach((p) => {
-        const is = p.getAttribute('data-tab') === tabName || p.id === tabName + 'Tab';
-        p.classList.toggle('hidden', !is);
-        p.classList.toggle('active', is);
+        const match = p.getAttribute('data-tab') === name || p.id === name + 'Tab';
+        p.classList.toggle('hidden', !match);
+        p.classList.toggle('active', match);
       });
-      // security/more live in dyn panes or drawers
       if (name === 'security') {
-        document.querySelectorAll('.side-tab-panel').forEach((p) => p.classList.add('hidden'));
-        let sec = document.getElementById('railSecurityMount');
-        if (!sec) {
-          sec = document.createElement('div');
-          sec.id = 'railSecurityMount';
-          sec.className = 'side-tab-panel active';
-          const src = document.getElementById('dynPaneSecurity') || document.getElementById('securityDrawer');
-          if (src) sec.appendChild(src.cloneNode(true));
-          document.querySelector('.side-tab-panels')?.appendChild(sec);
+        const mount = document.getElementById('securityPanelMount');
+        const src = document.getElementById('dynPaneSecurity');
+        if (mount && src && !mount.dataset.filled) {
+          mount.innerHTML = src.innerHTML;
+          mount.dataset.filled = '1';
         }
-        sec.classList.remove('hidden');
       }
       if (name === 'more') {
-        document.querySelectorAll('.side-tab-panel').forEach((p) => p.classList.add('hidden'));
-        let more = document.getElementById('railMoreMount');
-        if (!more) {
-          more = document.createElement('div');
-          more.id = 'railMoreMount';
-          more.className = 'side-tab-panel active';
-          const src = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
-          if (src) more.appendChild(src.cloneNode(true));
-          else more.innerHTML = '<div style="padding:1rem;opacity:.7">More</div>';
-          document.querySelector('.side-tab-panels')?.appendChild(more);
+        const mount = document.getElementById('morePanelMount');
+        const src = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
+        if (mount && src && !mount.dataset.filled) {
+          mount.innerHTML = src.innerHTML;
+          mount.dataset.filled = '1';
         }
-        more.classList.remove('hidden');
+      }
+      if (name === 'media') refreshMicDevices();
+      if (name === 'room') refreshRoomRaised();
+      if (name === 'chat') {
+        const mode = window.__railChatMode || 'group';
+        setChatMode(mode);
+      }
+      if (name === 'notifications') {
+        try { if (typeof renderNotifications === 'function') renderNotifications(); } catch (_) {}
+        try { if (typeof window.__meetRefreshNotifs === 'function') window.__meetRefreshNotifs(); } catch (_) {}
+      }
+      // also click legacy side-tab for wiring
+      const legacy = document.querySelector('.side-tab[data-tab="' + name + '"]');
+      if (legacy) {
+        try { legacy.click(); } catch (_) {}
       }
     }
 
@@ -7765,50 +7796,213 @@
       drawer.classList.remove('hidden');
       rail.querySelectorAll('.rail-btn.active').forEach((b) => b.classList.remove('active'));
       rail.querySelector('.rail-btn[data-panel="' + name + '"]')?.classList.add('active');
-      showPanel(name);
+      showTab(name);
     }
+    window.__meetTogglePanel = togglePanel;
 
     rail.querySelectorAll('.rail-btn.rail-panel').forEach((btn) => {
       btn.addEventListener('click', () => togglePanel(btn.getAttribute('data-panel')));
     });
 
-    // Wire action icons to existing controls
-    const click = (id) => document.getElementById(id)?.click();
-    document.getElementById('railMicBtn')?.addEventListener('click', () => click('micBtn') || (typeof toggleMic === 'function' && toggleMic()));
-    document.getElementById('railShareBtn')?.addEventListener('click', () => click('shareBtn'));
-    document.getElementById('railHandBtn')?.addEventListener('click', () => click('handBtn') || click('raiseHandBtn'));
-    document.getElementById('railLeaveBtn')?.addEventListener('click', () => {
+    // Account / media / room buttons
+    document.getElementById('accThemeBtn')?.addEventListener('click', () => document.getElementById('themeToggle')?.click());
+    document.getElementById('accHistoryBtn')?.addEventListener('click', () => document.getElementById('historyBtn')?.click());
+    document.getElementById('accAuthBtn')?.addEventListener('click', () => {
+      document.getElementById('loginBtn')?.click() || document.getElementById('logoutBtn')?.click();
+    });
+    document.getElementById('accLeaveBtn')?.addEventListener('click', () => {
       if (typeof leaveMeeting === 'function') leaveMeeting();
-      else click('leaveBtn');
+      else document.getElementById('leaveBtn')?.click();
     });
-    document.getElementById('railEndBtn')?.addEventListener('click', () => click('endMeetBtn') || click('endMeetBtnTop'));
-    document.getElementById('railShareLinkBtn')?.addEventListener('click', () => click('shareLinkBtn') || click('copyCodeBtn') || click('shareLinkBtnTop'));
-    document.getElementById('railThemeBtn')?.addEventListener('click', () => click('themeToggle'));
-    document.getElementById('railFsBtn')?.addEventListener('click', () => click('fullscreenBtn'));
-    document.getElementById('railHistoryBtn')?.addEventListener('click', () => click('historyBtn'));
-    document.getElementById('railAuthBtn')?.addEventListener('click', () => click('loginBtn') || click('logoutBtn'));
-    document.getElementById('railRecordBtn')?.addEventListener('click', () => {
-      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) {
-        // open mini already visible — toggle pause
-        document.getElementById('recPauseBtn')?.click();
-      } else {
-        document.getElementById('recordModal')?.classList.remove('hidden');
-      }
+    document.getElementById('accEndBtn')?.addEventListener('click', () => document.getElementById('endMeetBtn')?.click());
+    document.getElementById('mediaMicToggle')?.addEventListener('click', () => {
+      if (typeof toggleMic === 'function') toggleMic();
+    });
+    document.getElementById('mediaShareBtn')?.addEventListener('click', () => document.getElementById('shareBtn')?.click());
+    document.getElementById('mediaRecordBtn')?.addEventListener('click', () => {
+      document.getElementById('recordModal')?.classList.remove('hidden');
+    });
+    document.getElementById('roomCopyLinkBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('roomLinkBox');
+      const inp = document.getElementById('roomLinkInput');
+      const link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+      if (inp) inp.value = link;
+      if (box) box.classList.remove('hidden');
+      try { navigator.clipboard.writeText(link); if (typeof showToast === 'function') showToast('Link copied'); } catch (_) {}
+    });
+    document.getElementById('roomLinkCopy')?.addEventListener('click', () => {
+      const inp = document.getElementById('roomLinkInput');
+      if (inp) { try { navigator.clipboard.writeText(inp.value); if (typeof showToast === 'function') showToast('Copied'); } catch (_) {} }
+    });
+    document.getElementById('roomHandBtn')?.addEventListener('click', () => {
+      document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
+      refreshRoomRaised();
+    });
+    document.getElementById('roomMuteAllBtn')?.addEventListener('click', muteAll);
+    document.getElementById('peopleMuteAllBtn')?.addEventListener('click', muteAll);
+    document.querySelectorAll('.rail-open-panel').forEach((b) => {
+      b.addEventListener('click', () => {
+        const g = b.getAttribute('data-goto');
+        if (g) { openPanel = null; togglePanel(g); }
+      });
     });
 
-    // Sync people badge
-    setInterval(() => {
+    function muteAll() {
+      if (!isHostLike()) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'mute-all' });
+      if (typeof showToast === 'function') showToast('Mute all sent');
+    }
+
+    async function refreshMicDevices() {
+      const sel = document.getElementById('micDeviceSelect');
+      if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
       try {
-        const n = Array.isArray(participants) ? participants.length : 0;
-        const b = document.getElementById('railPeopleBadge');
-        const c = document.getElementById('participantCount');
-        if (b) b.textContent = String(n || (c && c.textContent) || '');
-        const end = document.getElementById('railEndBtn');
-        if (end) end.classList.toggle('hidden', !(myRole === 'host' || currentMeeting?.isHost));
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === 'audioinput');
+        const cur = sel.value;
+        sel.innerHTML = '';
+        mics.forEach((d) => {
+          const o = document.createElement('option');
+          o.value = d.deviceId;
+          o.textContent = d.label || 'Microphone';
+          sel.appendChild(o);
+        });
+        if (cur) sel.value = cur;
       } catch (_) {}
-    }, 1500);
+    }
+    document.getElementById('micDeviceSelect')?.addEventListener('change', async (e) => {
+      const id = e.target.value;
+      try {
+        if (room?.localParticipant && id) {
+          // LiveKit switch device if API available
+          if (typeof room.switchActiveDevice === 'function') {
+            await room.switchActiveDevice('audioinput', id);
+          }
+        }
+      } catch (err) { console.warn(err); }
+    });
 
-    // Stage hover reactions footer
+    function refreshRoomRaised() {
+      const list = document.getElementById('roomRaisedList');
+      if (!list) return;
+      list.innerHTML = '';
+      (participants || []).filter((p) => p.handRaised).forEach((p) => {
+        const li = document.createElement('li');
+        li.textContent = p.name || p.id;
+        list.appendChild(li);
+      });
+    }
+
+    // Chat modes group / dm
+    function setChatMode(mode) {
+      window.__railChatMode = mode;
+      document.getElementById('chatSubGroup')?.classList.toggle('active', mode === 'group');
+      document.getElementById('chatSubDm')?.classList.toggle('active', mode === 'dm');
+      const groupBox = document.getElementById('sideChat');
+      const dmHome = document.getElementById('dmHome');
+      const dmThread = document.getElementById('dmThread');
+      const form = document.getElementById('chatForm');
+      if (mode === 'group') {
+        if (groupBox) groupBox.classList.remove('hidden');
+        // show group messages area
+        document.getElementById('chatMessages')?.classList.remove('hidden');
+        if (form) form.classList.remove('hidden');
+        if (dmHome) dmHome.classList.add('hidden');
+        if (dmThread) dmThread.classList.add('hidden');
+      } else {
+        document.getElementById('chatMessages')?.classList.add('hidden');
+        if (form) form.classList.add('hidden');
+        if (dmHome) dmHome.classList.remove('hidden');
+        if (dmThread) dmThread.classList.add('hidden');
+        renderDmHome();
+      }
+    }
+    document.getElementById('chatSubGroup')?.addEventListener('click', () => setChatMode('group'));
+    document.getElementById('chatSubDm')?.addEventListener('click', () => setChatMode('dm'));
+
+    function renderDmHome() {
+      const conv = document.getElementById('dmConversationList');
+      const people = document.getElementById('dmPeopleList');
+      if (!conv || !people) return;
+      conv.innerHTML = '';
+      people.innerHTML = '';
+      const threads = Object.keys(dmStore).map((id) => ({ id, ...dmStore[id] }))
+        .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+      threads.forEach((th) => {
+        const li = document.createElement('li');
+        const last = (th.messages && th.messages[th.messages.length - 1]) || {};
+        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(th.name || th.id) + '</span>' +
+          (th.unread ? '<span class="dm-unread">' + th.unread + '</span>' : '') + '</div>' +
+          '<div class="dm-excerpt">' + escapeHtml(String(last.text || '').slice(0, 60)) + '</div>';
+        li.addEventListener('click', () => openDmThread(th.id, th.name));
+        conv.appendChild(li);
+      });
+      const selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach((p) => {
+        const id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        if (dmStore[id]) return; // already in conversations
+        const li = document.createElement('li');
+        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) + '</div>';
+        li.addEventListener('click', () => openDmThread(id, p.name));
+        people.appendChild(li);
+      });
+    }
+
+    function openDmThread(id, name) {
+      if (!dmStore[id]) dmStore[id] = { name: name || id, messages: [], unread: 0, lastAt: Date.now() };
+      dmStore[id].unread = 0;
+      dmStore[id].name = name || dmStore[id].name;
+      window.__dmTargetId = id;
+      document.getElementById('dmHome')?.classList.add('hidden');
+      const thread = document.getElementById('dmThread');
+      if (thread) thread.classList.remove('hidden');
+      const box = document.getElementById('dmThreadMessages');
+      if (box) {
+        box.innerHTML = '';
+        (dmStore[id].messages || []).forEach((m) => {
+          const el = document.createElement('div');
+          el.className = 'chat-msg';
+          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
+          box.appendChild(el);
+        });
+        box.scrollTop = box.scrollHeight;
+      }
+      // ensure chat panel open
+      if (openPanel !== 'chat') togglePanel('chat');
+      setChatMode('dm');
+      document.getElementById('dmHome')?.classList.add('hidden');
+      document.getElementById('dmThread')?.classList.remove('hidden');
+    }
+    window.__meetOpenDm = function (id, name) {
+      if (openPanel !== 'chat') togglePanel('chat');
+      setChatMode('dm');
+      openDmThread(id, name);
+    };
+    document.getElementById('dmBackBtn')?.addEventListener('click', () => {
+      document.getElementById('dmThread')?.classList.add('hidden');
+      document.getElementById('dmHome')?.classList.remove('hidden');
+      window.__dmTargetId = null;
+      renderDmHome();
+    });
+    document.getElementById('dmForm')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('dmInput');
+      const text = (input && input.value || '').trim();
+      const targetId = window.__dmTargetId;
+      if (!text || !targetId) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'private-chat', targetId, text });
+      // optimistic
+      const selfName = (participants || []).find((p) => p.id === currentMeeting?.participantId)?.name || 'You';
+      const msg = { fromId: currentMeeting?.participantId, fromName: selfName, text, at: Date.now() };
+      if (!dmStore[targetId]) dmStore[targetId] = { name: '', messages: [], unread: 0 };
+      dmStore[targetId].messages.push(msg);
+      dmStore[targetId].lastAt = Date.now();
+      if (input) input.value = '';
+      openDmThread(targetId, dmStore[targetId].name);
+    });
+
+    // Stage footer
     let hideTimer = null;
     const stage = document.getElementById('bigView') || document.querySelector('.big-view') || document.getElementById('col2');
     const footer = document.getElementById('stageHoverChrome');
@@ -7817,9 +8011,7 @@
       footer.classList.remove('hidden');
       footer.classList.add('visible');
       clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => {
-        footer.classList.remove('visible');
-      }, 2200);
+      hideTimer = setTimeout(() => footer.classList.remove('visible'), 2200);
     }
     if (stage) {
       stage.addEventListener('mousemove', showFooter);
@@ -7828,18 +8020,43 @@
         hideTimer = setTimeout(() => footer?.classList.remove('visible'), 400);
       });
     }
+    let lastRxClick = 0;
     document.getElementById('stageReactRow')?.addEventListener('click', (e) => {
       const btn = e.target.closest('.emoji-btn');
       if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
       if (btn.id === 'stageHandBtn') {
-        document.getElementById('railHandBtn')?.click();
+        document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
+        return;
+      }
+      if (btn.id === 'stageMicBtn') {
+        if (typeof toggleMic === 'function') toggleMic();
+        return;
+      }
+      if (btn.id === 'stageFsBtn') {
+        document.getElementById('fullscreenBtn')?.click();
+        return;
+      }
+      if (btn.id === 'stageChatBtn') {
+        togglePanel('chat');
         return;
       }
       const emoji = btn.getAttribute('data-emoji');
-      if (emoji && typeof sendWS === 'function') sendWS({ type: 'reaction', emoji });
+      if (!emoji) return;
+      const now = Date.now();
+      if (now - lastRxClick < 350) return;
+      lastRxClick = now;
+      if (typeof sendWS === 'function') {
+        sendWS({
+          type: 'reaction',
+          emoji,
+          fromName: (participants || []).find((p) => p.id === currentMeeting?.participantId)?.name || currentMeeting?.name || 'Me',
+        });
+      }
     });
 
-    // Circular screen cards near timer
+    // Circles only for active shares
     function initials(name) {
       const s = String(name || '?').trim();
       const parts = s.split(/\s+/);
@@ -7850,37 +8067,116 @@
       const cluster = document.getElementById('stageCardsCluster');
       if (!cluster) return;
       cluster.innerHTML = '';
-      const cards = document.querySelectorAll('#screenCards .screen-card, #screenCards [data-participant]');
-      const items = [];
-      if (cards.length) {
-        cards.forEach((c, i) => {
-          const name = c.getAttribute('data-name') || c.querySelector('.name, .label')?.textContent || 'U' + i;
-          items.push({ name, live: c.classList.contains('live') || !!c.querySelector('video'), el: c });
-        });
-      } else if (Array.isArray(participants)) {
-        participants.forEach((p) => {
-          items.push({ name: p.name || p.displayName || '?', live: !!p.sharing, id: p.id });
-        });
-      }
-      items.slice(0, 8).forEach((it, idx) => {
+      const sharers = (participants || []).filter((p) => p.sharing);
+      // also DOM live cards
+      document.querySelectorAll('#screenCards .screen-card.live, #screenCards [data-sharing="1"]').forEach((c) => {
+        const name = c.getAttribute('data-name') || c.textContent;
+        if (name && !sharers.find((s) => s.name === name)) sharers.push({ name, sharing: true, el: c });
+      });
+      sharers.forEach((it, idx) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'stage-card-circle' + (it.live ? ' live' : '') + (idx > 2 ? ' stage-card-extra' : '');
+        b.className = 'stage-card-circle live' + (idx > 2 ? ' stage-card-extra' : '');
         b.textContent = initials(it.name);
-        b.title = it.name;
-        b.addEventListener('click', () => {
-          try { it.el?.click(); } catch (_) {}
-        });
+        b.title = it.name || '';
+        b.addEventListener('click', () => { try { it.el?.click(); } catch (_) {} });
         cluster.appendChild(b);
       });
+      // idle background vs share
+      const big = document.getElementById('bigView') || document.querySelector('.big-view');
+      if (big) big.classList.toggle('has-active-share', sharers.length > 0 || !!document.querySelector('#bigView video, .big-view video'));
     }
-    setInterval(refreshStageCards, 2000);
+    setInterval(refreshStageCards, 1500);
 
-    // Recording mini controls visibility
-    const _urb = typeof updateRecordingBadge === 'function' ? updateRecordingBadge : null;
-    if (_urb) {
-      // wrap after definition — patch via interval on recordingState
+    // Talking wavelength via LiveKit audio levels when available
+    setInterval(() => {
+      try {
+        if (!room) return;
+        const parts = room.remoteParticipants ? [...room.remoteParticipants.values()] : [];
+        if (room.localParticipant) parts.push(room.localParticipant);
+        parts.forEach((lp) => {
+          const id = lp.identity || lp.sid;
+          let speaking = false;
+          try {
+            if (typeof lp.isSpeaking === 'boolean') speaking = lp.isSpeaking;
+            else if (lp.audioLevel != null) speaking = lp.audioLevel > 0.05;
+          } catch (_) {}
+          // match participant list by name/identity
+          document.querySelectorAll('[data-wave-for]').forEach((w) => {
+            const pid = w.getAttribute('data-wave-for');
+            const p = (participants || []).find((x) => x.id === pid);
+            if (!p) return;
+            const match = p.id === id || p.name === lp.name || (lp.identity && String(lp.identity).includes(p.id));
+            if (match) w.classList.toggle('hidden', !speaking);
+          });
+        });
+      } catch (_) {}
+    }, 200);
+
+    // Private chat WS ingest
+    window.__meetIngestPrivate = function (msg) {
+      const m = msg.message || msg;
+      if (!m) return;
+      const selfId = currentMeeting && currentMeeting.participantId;
+      const otherId = m.fromId === selfId ? m.toId : m.fromId;
+      const otherName = m.fromId === selfId ? m.toName : m.fromName;
+      if (!otherId) return;
+      if (!dmStore[otherId]) dmStore[otherId] = { name: otherName || otherId, messages: [], unread: 0 };
+      dmStore[otherId].messages.push(m);
+      dmStore[otherId].lastAt = m.at || Date.now();
+      dmStore[otherId].name = otherName || dmStore[otherId].name;
+      if (window.__dmTargetId !== otherId) dmStore[otherId].unread = (dmStore[otherId].unread || 0) + 1;
+      else openDmThread(otherId, dmStore[otherId].name);
+      const badge = document.getElementById('railChatBadge');
+      if (badge) {
+        const total = Object.values(dmStore).reduce((s, th) => s + (th.unread || 0), 0);
+        badge.textContent = total ? String(total) : '';
+        badge.classList.toggle('hidden', !total);
+      }
+      if (window.__railChatMode === 'dm' && window.__dmTargetId !== otherId) renderDmHome();
+    };
+
+    // Notifications badge on people? use rail - sync notif into list when events happen
+    // Bridge: patch addNotification to also update a rail badge if we add notifications slot under room
+    const _add = window.__meetAddNotification;
+    // ensure join/hand notifs still work - open people/notifications via room
+    setInterval(() => {
+      try {
+        const end = document.getElementById('accEndBtn');
+        const muteAll = document.getElementById('roomMuteAllBtn');
+        const muteAll2 = document.getElementById('peopleMuteAllBtn');
+        const show = isHostLike();
+        if (end) end.classList.toggle('hidden', !show);
+        if (muteAll) muteAll.classList.toggle('hidden', !show);
+        if (muteAll2) muteAll2.classList.toggle('hidden', !show);
+        const n = Array.isArray(participants) ? participants.length : 0;
+        const b = document.getElementById('railPeopleBadge');
+        if (b) b.textContent = String(n || '');
+      } catch (_) {}
+    }, 1200);
+
+    // Artifact modes
+    try {
+      const path = location.pathname;
+      const params = new URLSearchParams(location.search);
+      if (path.match(/^\/m\/[^/]+\/[^/]+/)) document.body.classList.add('artifact-readonly');
+      if (params.get('restart') === '1') document.body.classList.add('artifact-restarted');
+    } catch (_) {}
+
+    // Strengthen chat: single form submit path, prevent double
+    const chatForm = document.getElementById('chatForm');
+    if (chatForm && !chatForm.__railBound) {
+      chatForm.__railBound = true;
+      chatForm.addEventListener('submit', (e) => {
+        // if DM mode somehow, ignore group send
+        if (window.__railChatMode === 'dm') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
     }
+
+    // Recording mini
     setInterval(() => {
       const mini = document.getElementById('recMiniControls');
       if (!mini) return;
@@ -7893,19 +8189,47 @@
           : '<i class="fa-solid fa-pause"></i>';
       }
     }, 500);
-
-    // Artifact modes from URL
-    try {
-      const path = location.pathname;
-      const params = new URLSearchParams(location.search);
-      if (path.match(/^\/m\/[^/]+\/[^/]+/)) {
-        document.body.classList.add('artifact-readonly');
-      }
-      if (params.get('restart') === '1') {
-        document.body.classList.add('artifact-restarted');
-      }
-    } catch (_) {}
   })();
 
+  // Hook private-chat into existing WS extra handlers path
+  (function hookPrivateIntoPhase2() {
+    const prev = window.__meetIngestPrivate;
+    // phase2 extraHandlers may already exist - patch via interval on ws
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      try {
+        if (typeof ws !== 'undefined' && ws && !ws.__dmHook) {
+          ws.__dmHook = true;
+          const p = ws.onmessage;
+          ws.onmessage = function (ev) {
+            if (typeof p === 'function') p.call(this, ev);
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'private-chat' && typeof window.__meetIngestPrivate === 'function') {
+                window.__meetIngestPrivate(msg);
+              }
+              if (msg.type === 'reaction' && msg.fromName && typeof showReaction === 'function') {
+                // showReaction already called from main handler; dedup handles doubles
+              }
+            } catch (_) {}
+          };
+          clearInterval(iv);
+        }
+      } catch (_) {}
+      if (tries > 80) clearInterval(iv);
+    }, 250);
+  })();
+
+
+
+
+  document.getElementById('peopleNotifBtn')?.addEventListener('click', () => {
+    if (typeof window.__meetTogglePanel === 'function') window.__meetTogglePanel('notifications');
+    else {
+      document.querySelector('.side-tab[data-tab="notifications"]')?.click();
+      document.getElementById('meetSideDrawer')?.classList.remove('hidden');
+    }
+  });
 
 })();
