@@ -6387,7 +6387,6 @@ html.dark .dm-list li:hover { background: rgba(255,255,255,0.06); }
 .chat-inbox { padding: 0.5rem; height: 100%; overflow: auto; }
 .chat-inbox-list li.pinned {
   background: rgba(79,70,229,0.08);
-  border-left: 3px solid var(--primary,#4f46e5);
 }
 .chat-thread-view { display: flex; flex-direction: column; height: 100%; }
 .chat-thread-view.hidden { display: none !important; }

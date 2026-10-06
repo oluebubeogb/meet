@@ -2,6 +2,7 @@
  * Phase 2 — in-meeting sub-group chats
  * Host/cohost can create groups, add/remove members.
  * Messages persisted to chat_messages with group_id.
+ * Live updates so members see groups without page reload.
  */
 
 const db = require('../../db');
@@ -9,7 +10,7 @@ const db = require('../../db');
 module.exports = {
   id: 'groupChat',
   register(ctx) {
-    const { sendToParticipant, broadcast } = ctx;
+    const { sendToParticipant } = ctx;
 
     function isModerator(actor) {
       return actor && (actor.role === 'host' || actor.role === 'cohost');
@@ -20,48 +21,66 @@ module.exports = {
       return g ? (g.members || []) : [];
     }
 
-    function sendToGroup(meeting, groupId, payload, exceptId) {
+    function memberPayload(meeting, groupId) {
+      const g = meeting.chatGroups[groupId];
+      if (!g) return [];
+      return g.members.map((id) => {
+        const p = meeting.participants.get(id);
+        return {
+          id,
+          name: p ? p.name : (g.memberNames && g.memberNames[id]) || id,
+          role: p ? p.role : 'participant',
+          userId: p ? p.userId || null : null,
+        };
+      });
+    }
+
+    function sendToGroup(meeting, groupId, payload) {
       const members = memberIds(meeting, groupId);
       for (const mid of members) {
-        if (exceptId && mid === exceptId) continue;
         sendToParticipant(mid, payload);
       }
+    }
+
+    function emitGroupState(meeting, groupId) {
+      const g = meeting.chatGroups[groupId];
+      if (!g) return;
+      const state = {
+        type: 'group-state',
+        group: {
+          id: groupId,
+          title: g.title,
+          members: memberPayload(meeting, groupId),
+        },
+      };
+      sendToGroup(meeting, groupId, state);
     }
 
     ctx.onWs('group-create', ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!isModerator(actor)) return;
       const groupId = String(msg.groupId || 'grp_' + Date.now()).slice(0, 80);
-      const title = String(msg.title || 'Group').trim().slice(0, 40) || 'Group';
+      const title = String(msg.title || msg.name || 'Group').trim().slice(0, 40) || 'Group';
       let members = Array.isArray(msg.members) ? msg.members.map(String).slice(0, 50) : [];
       if (!members.includes(participantId)) members.unshift(participantId);
+      members = [...new Set(members)];
 
       if (!meeting.chatGroups) meeting.chatGroups = {};
+      const memberNames = {};
+      members.forEach((id) => {
+        const p = meeting.participants.get(id);
+        memberNames[id] = p ? p.name : id;
+      });
       meeting.chatGroups[groupId] = {
         id: groupId,
         title,
-        members: [...new Set(members)],
+        members,
+        memberNames,
         createdBy: participantId,
         messages: [],
       };
 
-      const state = {
-        type: 'group-state',
-        group: {
-          id: groupId,
-          title,
-          members: meeting.chatGroups[groupId].members.map((id) => {
-            const p = meeting.participants.get(id);
-            return {
-              id,
-              name: p ? p.name : id,
-              role: p ? p.role : 'participant',
-              userId: p ? p.userId || null : null,
-            };
-          }),
-        },
-      };
-      sendToGroup(meeting, groupId, state);
+      emitGroupState(meeting, groupId);
 
       Promise.resolve()
         .then(async () => {
@@ -73,7 +92,7 @@ module.exports = {
             createdByParticipantId: participantId,
             createdByUserId: actor.userId || null,
           });
-          for (const mid of meeting.chatGroups[groupId].members) {
+          for (const mid of members) {
             const p = meeting.participants.get(mid);
             await db.addChatGroupMember({
               groupId,
@@ -97,7 +116,7 @@ module.exports = {
       if (!g.members.includes(participantId)) return;
 
       const entry = {
-        id: 'gc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        id: 'gc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
         groupId,
         fromId: participantId,
         fromName: actor.name,
@@ -146,27 +165,17 @@ module.exports = {
       const targetId = String(msg.targetId || '');
       if (!groupId || !targetId || !meeting.chatGroups || !meeting.chatGroups[groupId]) return;
       const target = meeting.participants.get(targetId);
-      if (!target || target.status !== 'ACTIVE') return;
+      if (!target) return;
       const g = meeting.chatGroups[groupId];
       if (!g.members.includes(targetId)) g.members.push(targetId);
+      if (!g.memberNames) g.memberNames = {};
+      g.memberNames[targetId] = target.name;
 
-      const memberPayload = {
-        type: 'group-members',
-        groupId,
-        members: g.members.map((id) => {
-          const p = meeting.participants.get(id);
-          return {
-            id,
-            name: p ? p.name : id,
-            role: p ? p.role : 'participant',
-            userId: p ? p.userId || null : null,
-          };
-        }),
-      };
-      sendToGroup(meeting, groupId, memberPayload);
+      emitGroupState(meeting, groupId);
+      // Explicit notify for the newly added member (in case emit missed)
       sendToParticipant(targetId, {
         type: 'group-state',
-        group: { id: groupId, title: g.title, members: memberPayload.members },
+        group: { id: groupId, title: g.title, members: memberPayload(meeting, groupId) },
       });
 
       db.addChatGroupMember({
@@ -186,45 +195,28 @@ module.exports = {
       const g = meeting.chatGroups[groupId];
       g.members = g.members.filter((id) => id !== targetId);
 
-      const memberPayload = {
+      const memberPayloadMsg = {
         type: 'group-members',
         groupId,
-        members: g.members.map((id) => {
-          const p = meeting.participants.get(id);
-          return {
-            id,
-            name: p ? p.name : id,
-            role: p ? p.role : 'participant',
-            userId: p ? p.userId || null : null,
-          };
-        }),
+        members: memberPayload(meeting, groupId),
       };
-      sendToGroup(meeting, groupId, memberPayload);
+      sendToGroup(meeting, groupId, memberPayloadMsg);
       sendToParticipant(targetId, { type: 'group-removed', groupId });
 
       db.removeChatGroupMember(groupId, targetId).catch(() => {});
     });
 
-    // Replay groups this participant belongs to
+    // Replay groups this participant belongs to (and backfill title/messages)
     ctx.onRegister((ws, meeting, participantId) => {
       if (!meeting || !meeting.chatGroups) return;
       try {
         for (const gid of Object.keys(meeting.chatGroups)) {
           const g = meeting.chatGroups[gid];
           if (!g.members.includes(participantId)) continue;
-          const members = g.members.map((id) => {
-            const p = meeting.participants.get(id);
-            return {
-              id,
-              name: p ? p.name : id,
-              role: p ? p.role : 'participant',
-              userId: p ? p.userId || null : null,
-            };
-          });
           ws.send(
             JSON.stringify({
               type: 'group-state',
-              group: { id: gid, title: g.title, members },
+              group: { id: gid, title: g.title, members: memberPayload(meeting, gid) },
             })
           );
           const msgs = (g.messages || []).slice(-80);

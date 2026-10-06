@@ -822,6 +822,7 @@
           renderCards();
         }
         try { updateShareButton(); } catch (_) {}
+        try { if (typeof window.__meetRefreshChatLive === 'function') window.__meetRefreshChatLive(); } catch (_) {}
         if ((msg.type === 'participant-left' || msg.type === 'share-stopped' || msg.type === 'participant-removed') && watchingId === msg.participantId) {
           clearBigView();
         }
@@ -2018,7 +2019,9 @@
         pm.innerHTML = '<i class="fa-regular fa-envelope"></i>';
         pm.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (typeof window.__meetOpenDm === 'function') window.__meetOpenDm(p.id, p.name);
+          if (typeof window.__meetOpenDm === 'function') {
+            window.__meetOpenDm(p.id, p.name, p.userId || null);
+          }
         });
         li.appendChild(pm);
       }
@@ -7806,7 +7809,6 @@
       everyone: { id: 'everyone', title: 'Group chat', pinned: true, kind: 'group', messages: [], unread: 0, lastText: '', lastAt: 0, members: [] }
     };
     var activeChannelId = null;
-    // Expose for appendChatMessage (same outer function or cross-scope)
     Object.defineProperty(window, '__meetActiveChannelId', {
       get: function () { return activeChannelId; },
       set: function (v) { activeChannelId = v; },
@@ -7826,7 +7828,22 @@
       } catch (_) { return ''; }
     }
 
-    /** Premium left/right bubble renderer used by public, private, and sub-group threads */
+    function msgKey(m) {
+      if (!m) return '';
+      if (m.id) return String(m.id);
+      return [m.fromId || m.participantId || '', m.at || '', m.text || m.body || ''].join('|');
+    }
+
+    function channelHasMsg(ch, m) {
+      if (!ch || !ch.messages) return false;
+      var k = msgKey(m);
+      if (!k) return false;
+      for (var i = 0; i < ch.messages.length; i++) {
+        if (msgKey(ch.messages[i]) === k) return true;
+      }
+      return false;
+    }
+
     function renderBubbleMessage(m, opts) {
       opts = opts || {};
       var selfId = currentMeeting && currentMeeting.participantId;
@@ -7839,6 +7856,7 @@
 
       var row = document.createElement('div');
       row.className = 'chat-msg-row' + (isMe ? ' is-me' : '');
+      row.setAttribute('data-msg-key', msgKey(m));
       applySelfChatColorSafe();
       if (isMe) row.style.setProperty('--chat-self-color', (typeof selfChatColor === 'function' ? selfChatColor() : '#4f8cff'));
 
@@ -7850,9 +7868,6 @@
         body = (typeof escapeHtml === 'function' ? escapeHtml(body) : body);
       }
       var meta = formatChatTime(m.at || m.created_at);
-      if (m.peerIsGuest || opts.peerIsGuest) {
-        // subtle marker handled by channel banner, not per message
-      }
       row.innerHTML =
         '<span class="chat-who">' + (typeof escapeHtml === 'function' ? escapeHtml(who) : who) + '</span>' +
         (body ? '<div class="chat-msg-body">' + body + '</div>' : '') +
@@ -7861,11 +7876,31 @@
     }
 
     function appendBubbleToBox(box, m, opts) {
-      if (!box) return;
+      if (!box || !m) return null;
+      var k = msgKey(m);
+      if (k && box.querySelector('[data-msg-key="' + k.replace(/"/g, '') + '"]')) return null;
       var row = renderBubbleMessage(m, opts);
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
       return row;
+    }
+
+    function rerenderActiveChannel() {
+      var ch = activeChannelId && chatChannels[activeChannelId];
+      var box = document.getElementById('chatMessages');
+      if (!ch || !box) return;
+      var scrollBottom = Math.abs(box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+      box.innerHTML = '';
+      if (ch.peerIsGuest) {
+        var banner = document.createElement('div');
+        banner.className = 'chat-msg-row guest-label-row';
+        banner.textContent = 'This chat includes a guest — history is kept for your account';
+        box.appendChild(banner);
+      }
+      (ch.messages || []).forEach(function (m) {
+        appendBubbleToBox(box, m, { peerIsGuest: ch.peerIsGuest });
+      });
+      if (scrollBottom) box.scrollTop = box.scrollHeight;
     }
 
     function setThreadTitle(title) {
@@ -7920,6 +7955,7 @@
         if (canManage && ch && ch.kind === 'subgroup') {
           var sel = document.getElementById('chatMembersAddSelect');
           if (sel) {
+            var prev = sel.value;
             sel.innerHTML = '<option value="">Add participant…</option>';
             var existing = {};
             (ch.members || []).forEach(function (id) { existing[id] = true; });
@@ -7932,10 +7968,42 @@
               opt.textContent = p.name || id;
               sel.appendChild(opt);
             });
+            if (prev) sel.value = prev;
           }
         }
       }
     }
+
+    /** Refresh live-dependent chat UI when roster changes (no page reload). */
+    window.__meetRefreshChatLive = function () {
+      try {
+        var inbox = document.getElementById('chatInbox');
+        if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+        var ch = activeChannelId && chatChannels[activeChannelId];
+        var panel = document.getElementById('chatMembersPanel');
+        if (ch && panel && !panel.classList.contains('hidden')) renderMembersPanel(ch);
+        var ngp = document.getElementById('chatNewGroupPanel');
+        if (ngp && !ngp.classList.contains('hidden')) {
+          var list = document.getElementById('newGroupMemberList');
+          if (list) {
+            var checked = {};
+            list.querySelectorAll('input:checked').forEach(function (i) {
+              checked[i.getAttribute('data-pid')] = true;
+            });
+            list.innerHTML = '';
+            var selfId = currentMeeting && currentMeeting.participantId;
+            (participants || []).forEach(function (p) {
+              var id = p.id || p.participantId;
+              if (!id || id === selfId) return;
+              var li = document.createElement('li');
+              li.innerHTML = '<label><input type="checkbox" data-pid="' + id + '"' +
+                (checked[id] ? ' checked' : '') + '> ' + escapeHtml(p.name || id) + '</label>';
+              list.appendChild(li);
+            });
+          }
+        }
+      } catch (e) { console.warn('[chat live refresh]', e); }
+    };
 
     function showChatInbox() {
       var inbox = document.getElementById('chatInbox');
@@ -8008,19 +8076,16 @@
         var data = await api('/api/dm/with-user?userId=' + encodeURIComponent(ch.peerUserId));
         if (!data || !Array.isArray(data.messages)) return;
         ch.threadId = data.threadId;
-        // Merge without duplicates
-        var existingIds = {};
-        (ch.messages || []).forEach(function (m) { if (m.id) existingIds[m.id] = true; });
         data.messages.forEach(function (m) {
-          if (m.id && existingIds[m.id]) return;
-          ch.messages.push({
-            id: m.id,
+          var mapped = {
+            id: m.id ? ('db_' + m.id) : undefined,
             fromName: m.fromName,
             fromUserId: m.fromUserId,
             text: m.text,
             at: m.at,
             isMe: m.isMe
-          });
+          };
+          if (!channelHasMsg(ch, mapped)) ch.messages.push(mapped);
         });
         ch.messages.sort(function (a, b) {
           return (Date.parse(a.at) || a.at || 0) - (Date.parse(b.at) || b.at || 0);
@@ -8028,7 +8093,7 @@
         if (ch.messages.length) {
           var last = ch.messages[ch.messages.length - 1];
           ch.lastText = last.text || '';
-          ch.lastAt = Date.parse(last.at) || Date.now();
+          ch.lastAt = Date.parse(last.at) || last.at || Date.now();
         }
       } catch (e) {
         console.warn('[dm history]', e);
@@ -8038,6 +8103,7 @@
     async function openChatChannel(id) {
       var ch = chatChannels[id];
       if (!ch) return;
+      var switching = activeChannelId !== id;
       activeChannelId = id;
       ch.unread = 0;
       var inbox = document.getElementById('chatInbox');
@@ -8052,25 +8118,12 @@
       setThreadTitle(ch.title + (ch.peerIsGuest ? ' (guest)' : ''));
       setMembersBtnVisible(ch.kind === 'subgroup' || ch.kind === 'group');
 
-      // Load cross-meeting DM history when both parties are logged in
       if (ch.kind === 'dm' && ch.peerUserId && currentUser) {
         await loadDmHistoryForChannel(ch);
       }
 
-      var box = document.getElementById('chatMessages');
-      if (box) {
-        box.innerHTML = '';
-        if (ch.peerIsGuest) {
-          var banner = document.createElement('div');
-          banner.className = 'chat-msg-row guest-label-row';
-          banner.textContent = 'This chat includes a guest — history is kept for your account';
-          box.appendChild(banner);
-        }
-        (ch.messages || []).forEach(function (m) {
-          appendBubbleToBox(box, m, { peerIsGuest: ch.peerIsGuest });
-        });
-        box.scrollTop = box.scrollHeight;
-      }
+      // Always rebuild thread DOM when opening/switching to avoid blank states
+      rerenderActiveChannel();
       updateChatBadge();
     }
 
@@ -8177,49 +8230,67 @@
           var me = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
           if (me) selfName = me.name || 'Me';
         } catch (_) {}
+        var localId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         if (ch.peerId && typeof sendWS === 'function') {
-          sendWS({ type: 'private-chat', targetId: ch.peerId, text: text });
+          var payload = { type: 'private-chat', targetId: ch.peerId, text: text };
+          if (ch.peerUserId) payload.targetUserId = ch.peerUserId;
+          if (ch.title) payload.targetName = ch.title;
+          sendWS(payload);
         } else if (ch.kind === 'subgroup' && typeof sendWS === 'function') {
           sendWS({ type: 'group-chat', groupId: ch.id, text: text, members: ch.members });
         }
+        // Optimistic UI with local id — server echo will dedupe by text+near-time if needed
         var msg = {
+          id: localId,
           fromName: selfName,
           fromId: currentMeeting && currentMeeting.participantId,
           fromUserId: currentUser && currentUser.id,
           text: text,
           at: Date.now(),
-          isMe: true
+          isMe: true,
+          _optimistic: true
         };
-        ch.messages.push(msg);
+        if (!channelHasMsg(ch, msg)) {
+          ch.messages.push(msg);
+          var box = document.getElementById('chatMessages');
+          if (box) appendBubbleToBox(box, msg);
+        }
         ch.lastText = text;
         ch.lastAt = Date.now();
         if (input) input.value = '';
-        var box = document.getElementById('chatMessages');
-        if (box) appendBubbleToBox(box, msg);
       }, true);
     }
 
     window.__meetNotePublicChat = function (text, fromName, participantId) {
       var ch = chatChannels.everyone;
-      ch.lastText = text || '';
-      ch.lastAt = Date.now();
-      ch.messages.push({
+      var m = {
+        id: 'pub_' + (participantId || '') + '_' + Date.now() + '_' + String(text || '').slice(0, 24),
         fromName: fromName || '',
         participantId: participantId,
         text: text || '',
         at: Date.now()
+      };
+      // soft dedupe: same sender+text within 2s
+      var softDup = (ch.messages || []).some(function (x) {
+        return x.participantId === participantId && x.text === (text || '') && Math.abs((x.at || 0) - m.at) < 2000;
       });
+      if (softDup || channelHasMsg(ch, m)) return;
+      ch.lastText = text || '';
+      ch.lastAt = Date.now();
+      ch.messages.push(m);
       if (activeChannelId !== 'everyone') ch.unread = (ch.unread || 0) + 1;
       updateChatBadge();
       var inbox = document.getElementById('chatInbox');
       if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+      // DOM for "everyone" is owned by appendChatMessage when that channel is open;
+      // only bubble-append here if appendChatMessage was skipped (active non-everyone already returned early)
       if (activeChannelId === 'everyone') {
-        var box = document.getElementById('chatMessages');
-        if (box) appendBubbleToBox(box, { fromName: fromName, participantId: participantId, text: text, at: Date.now() });
+        // appendChatMessage also writes when everyone is active — skip extra bubble
       }
     };
 
     window.__meetOpenDm = function (id, name, userId) {
+      if (!id) return;
       var key = 'dm:' + id;
       if (!chatChannels[key]) {
         chatChannels[key] = {
@@ -8234,8 +8305,27 @@
           lastText: '',
           lastAt: 0
         };
+      } else {
+        if (name) chatChannels[key].title = name;
+        if (userId) {
+          chatChannels[key].peerUserId = userId;
+          chatChannels[key].peerIsGuest = false;
+        }
       }
-      if (openPanel !== 'chat') togglePanel('chat');
+      // Open chat panel then the exact DM thread
+      try {
+        if (typeof togglePanel === 'function') {
+          if (typeof openPanel !== 'undefined' && openPanel !== 'chat') togglePanel('chat');
+          else if (typeof openPanel === 'undefined') togglePanel('chat');
+        }
+        var chatTab = document.querySelector('.side-tab[data-tab="chat"], .rail-btn[data-panel="chat"]');
+        if (chatTab && typeof chatTab.click === 'function') {
+          // ensure chat surface visible on mobile/desktop
+        }
+        if (typeof window.__meetTogglePanel === 'function') {
+          try { window.__meetTogglePanel('chat'); } catch (_) {}
+        }
+      } catch (_) {}
       openChatChannel(key);
     };
 
@@ -8243,16 +8333,57 @@
       var m = msg.message || msg;
       if (!m) return;
       var selfId = currentMeeting && currentMeeting.participantId;
-      var otherId = m.fromId === selfId ? m.toId : m.fromId;
-      var otherName = m.fromId === selfId ? m.toName : m.fromName;
-      var otherUserId = m.fromId === selfId ? m.toUserId : m.fromUserId;
+      var selfUserId = currentUser && currentUser.id;
+
+      // Resolve peer — prefer live participant ids; fall back to user ids from DB history
+      var otherId = null;
+      var otherName = null;
+      var otherUserId = null;
+
+      if (m.fromId === selfId) {
+        otherId = m.toId;
+        otherName = m.toName;
+        otherUserId = m.toUserId;
+      } else if (m.toId === selfId) {
+        otherId = m.fromId;
+        otherName = m.fromName;
+        otherUserId = m.fromUserId;
+      } else if (m.fromUserId && selfUserId && m.fromUserId === selfUserId) {
+        otherId = m.toId;
+        otherName = m.toName || m._peerName;
+        otherUserId = m.toUserId || m._peerUserId;
+      } else if (m.toUserId && selfUserId && m.toUserId === selfUserId) {
+        otherId = m.fromId;
+        otherName = m.fromName;
+        otherUserId = m.fromUserId;
+      } else if (m._peerUserId || m._peerName) {
+        otherUserId = m._peerUserId;
+        otherName = m._peerName;
+        otherId = m.fromId === selfId ? m.toId : m.fromId;
+      }
+
+      if (!otherId && otherUserId) {
+        // Find live participant by userId
+        var peer = (participants || []).find(function (p) { return p.userId === otherUserId; });
+        if (peer) otherId = peer.id || peer.participantId;
+        else otherId = 'user:' + otherUserId;
+      }
       if (!otherId) return;
+
       var key = 'dm:' + otherId;
+      // Also merge into channel keyed by user if we previously opened via user
+      if (!chatChannels[key] && otherUserId) {
+        var alt = Object.keys(chatChannels).find(function (k) {
+          return chatChannels[k].kind === 'dm' && chatChannels[k].peerUserId === otherUserId;
+        });
+        if (alt) key = alt;
+      }
+
       if (!chatChannels[key]) {
         chatChannels[key] = {
           id: key,
           title: otherName || otherId,
-          peerId: otherId,
+          peerId: String(otherId).indexOf('user:') === 0 ? null : otherId,
           peerUserId: otherUserId || null,
           peerIsGuest: !otherUserId,
           kind: 'dm',
@@ -8262,14 +8393,43 @@
           lastAt: 0
         };
       }
-      chatChannels[key].messages.push(m);
+      // Deduplicate optimistic local messages: same text from me within 15s
+      if (m.id && channelHasMsg(chatChannels[key], m)) return;
+      if (m.fromId === selfId || (m.fromUserId && selfUserId && m.fromUserId === selfUserId)) {
+        var dup = (chatChannels[key].messages || []).some(function (x) {
+          return x._optimistic && x.text === m.text && Math.abs((x.at || 0) - (m.at || Date.now())) < 15000;
+        });
+        if (dup) {
+          // Upgrade optimistic entry with server id
+          for (var i = 0; i < chatChannels[key].messages.length; i++) {
+            var x = chatChannels[key].messages[i];
+            if (x._optimistic && x.text === m.text) {
+              x.id = m.id || x.id;
+              x._optimistic = false;
+              break;
+            }
+          }
+          return;
+        }
+      }
+
+      if (!channelHasMsg(chatChannels[key], m)) {
+        chatChannels[key].messages.push(m);
+      }
       chatChannels[key].lastText = m.text || '';
       chatChannels[key].lastAt = m.at || Date.now();
-      chatChannels[key].title = otherName || chatChannels[key].title;
-      if (otherUserId) chatChannels[key].peerUserId = otherUserId;
-      chatChannels[key].peerIsGuest = !chatChannels[key].peerUserId;
-      if (activeChannelId !== key) chatChannels[key].unread = (chatChannels[key].unread || 0) + 1;
-      else {
+      if (otherName) chatChannels[key].title = otherName;
+      if (otherUserId) {
+        chatChannels[key].peerUserId = otherUserId;
+        chatChannels[key].peerIsGuest = false;
+      }
+      if (otherId && String(otherId).indexOf('user:') !== 0) {
+        chatChannels[key].peerId = otherId;
+      }
+
+      if (activeChannelId !== key) {
+        chatChannels[key].unread = (chatChannels[key].unread || 0) + 1;
+      } else {
         var box = document.getElementById('chatMessages');
         if (box) appendBubbleToBox(box, m);
       }
@@ -8283,11 +8443,13 @@
       messages.forEach(function (m) {
         window.__meetIngestPrivate({ message: m });
       });
-      // clear unread from history replay
       Object.keys(chatChannels).forEach(function (k) {
         if (String(k).indexOf('dm:') === 0) chatChannels[k].unread = 0;
       });
       updateChatBadge();
+      if (activeChannelId && String(activeChannelId).indexOf('dm:') === 0) {
+        rerenderActiveChannel();
+      }
     };
 
     window.__meetIngestGroupState = function (group) {
@@ -8306,7 +8468,7 @@
           lastAt: 0
         };
       } else {
-        chatChannels[gid].title = group.title || chatChannels[gid].title;
+        if (group.title) chatChannels[gid].title = group.title;
         chatChannels[gid].members = (group.members || []).map(function (m) { return m.id || m; });
         chatChannels[gid].memberDetails = group.members || chatChannels[gid].memberDetails;
       }
@@ -8334,7 +8496,26 @@
           lastAt: 0
         };
       }
-      chatChannels[gid].messages.push(m);
+      // Dedup optimistic
+      if (m.id && channelHasMsg(chatChannels[gid], m)) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      if (m.fromId === selfId) {
+        var dup = (chatChannels[gid].messages || []).some(function (x) {
+          return x._optimistic && x.text === m.text && Math.abs((x.at || 0) - (m.at || Date.now())) < 15000;
+        });
+        if (dup) {
+          for (var i = 0; i < chatChannels[gid].messages.length; i++) {
+            var x = chatChannels[gid].messages[i];
+            if (x._optimistic && x.text === m.text) {
+              x.id = m.id || x.id;
+              x._optimistic = false;
+              break;
+            }
+          }
+          return;
+        }
+      }
+      if (!channelHasMsg(chatChannels[gid], m)) chatChannels[gid].messages.push(m);
       chatChannels[gid].lastText = m.text || '';
       chatChannels[gid].lastAt = m.at || Date.now();
       if (activeChannelId !== gid) chatChannels[gid].unread = (chatChannels[gid].unread || 0) + 1;
@@ -8347,6 +8528,20 @@
       if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
     };
 
+    // Lightweight keep-alive: if active thread DOM was wiped, rebuild from channel state
+    setInterval(function () {
+      try {
+        if (!activeChannelId) return;
+        var box = document.getElementById('chatMessages');
+        var ch = chatChannels[activeChannelId];
+        if (!box || !ch) return;
+        var view = document.getElementById('chatThreadView');
+        if (view && view.classList.contains('hidden')) return;
+        if ((ch.messages || []).length > 0 && box.children.length === 0) {
+          rerenderActiveChannel();
+        }
+      } catch (_) {}
+    }, 2000);
 
     var stageChatTop = document.getElementById('stageChatBtnTop');
     if (stageChatTop) stageChatTop.addEventListener('click', function () { togglePanel('chat'); });
@@ -8870,35 +9065,8 @@
     }, 500);
   })();
 
-  // Hook private-chat into existing WS extra handlers path
-  (function hookPrivateIntoPhase2() {
-    const prev = window.__meetIngestPrivate;
-    // phase2 extraHandlers may already exist - patch via interval on ws
-    let tries = 0;
-    const iv = setInterval(() => {
-      tries++;
-      try {
-        if (typeof ws !== 'undefined' && ws && !ws.__dmHook) {
-          ws.__dmHook = true;
-          const p = ws.onmessage;
-          ws.onmessage = function (ev) {
-            if (typeof p === 'function') p.call(this, ev);
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === 'private-chat' && typeof window.__meetIngestPrivate === 'function') {
-                window.__meetIngestPrivate(msg);
-              }
-              if (msg.type === 'reaction' && msg.fromName && typeof showReaction === 'function') {
-                // showReaction already called from main handler; dedup handles doubles
-              }
-            } catch (_) {}
-          };
-          clearInterval(iv);
-        }
-      } catch (_) {}
-      if (tries > 80) clearInterval(iv);
-    }, 250);
-  })();
+  // private-chat delivered via extraHandlers only (no duplicate onmessage hook)
+
 
 
 
