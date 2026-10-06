@@ -1770,7 +1770,10 @@
           : '<i class="fa-solid fa-microphone-slash"></i> <span id="mediaMicLabel">Mic off</span>';
       }
       document.querySelectorAll('#stageMicBtn').forEach((b) => {
-        b.textContent = micOn ? '🎤' : '🔇';
+        b.innerHTML = micOn
+          ? '<i class="fa-solid fa-microphone"></i>'
+          : '<i class="fa-solid fa-microphone-slash"></i>';
+        b.classList.toggle('muted', !micOn);
         b.title = micOn ? 'Mute' : 'Unmute';
       });
     } catch (_) {}
@@ -3237,6 +3240,12 @@
       mentions: mentions,
       attachment: attachment || null,
     });
+    try {
+      if (typeof window.__meetNotePublicChat === 'function') {
+        var nm = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
+        window.__meetNotePublicChat(text, (nm && nm.name) || 'Me');
+      }
+    } catch (_) {}
   }
 
   function showReaction(msg) {
@@ -7745,42 +7754,301 @@
       } catch (_) { return false; }
     }
 
-    function showTab(name) {
-      document.querySelectorAll('.side-tab-panel').forEach((p) => {
-        const match = p.getAttribute('data-tab') === name || p.id === name + 'Tab';
-        p.classList.toggle('hidden', !match);
-        p.classList.toggle('active', match);
+
+    var chatChannels = {
+      everyone: { id: 'everyone', title: 'Group chat', pinned: true, messages: [], unread: 0, lastText: '', lastAt: 0 }
+    };
+    var activeChannelId = null;
+
+    function showChatInbox() {
+      var inbox = document.getElementById('chatInbox');
+      var thread = document.getElementById('chatThreadView');
+      var ngp = document.getElementById('chatNewGroupPanel');
+      if (inbox) inbox.classList.remove('hidden');
+      if (thread) thread.classList.add('hidden');
+      if (ngp) ngp.classList.add('hidden');
+      activeChannelId = null;
+      renderChatInbox();
+      var ng = document.getElementById('chatNewGroupBtn');
+      if (ng) ng.classList.toggle('hidden', !isHostLike());
+    }
+
+    function renderChatInbox() {
+      var list = document.getElementById('chatInboxList');
+      if (!list) return;
+      list.innerHTML = '';
+      var items = Object.keys(chatChannels).map(function (k) { return chatChannels[k]; });
+      items.sort(function (a, b) {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return (b.lastAt || 0) - (a.lastAt || 0);
       });
+      items.forEach(function (ch) {
+        var li = document.createElement('li');
+        if (ch.pinned) li.classList.add('pinned');
+        li.innerHTML = '<div class="dm-name"><span>' + escapeHtml(ch.title) + '</span>' +
+          (ch.unread ? '<span class="dm-unread">' + ch.unread + '</span>' : '') + '</div>' +
+          '<div class="dm-excerpt">' + escapeHtml(String(ch.lastText || '').slice(0, 70)) + '</div>';
+        li.addEventListener('click', function () { openChatChannel(ch.id); });
+        list.appendChild(li);
+      });
+      var selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach(function (p) {
+        var id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        var key = 'dm:' + id;
+        if (chatChannels[key]) return;
+        var li = document.createElement('li');
+        li.innerHTML = '<div class="dm-name">' + escapeHtml(p.name || id) + '</div><div class="dm-excerpt">Message…</div>';
+        li.addEventListener('click', function () {
+          chatChannels[key] = { id: key, title: p.name || id, peerId: id, messages: [], unread: 0, lastText: '', lastAt: 0 };
+          openChatChannel(key);
+        });
+        list.appendChild(li);
+      });
+    }
+
+    function openChatChannel(id) {
+      var ch = chatChannels[id];
+      if (!ch) return;
+      activeChannelId = id;
+      ch.unread = 0;
+      var inbox = document.getElementById('chatInbox');
+      var ngp = document.getElementById('chatNewGroupPanel');
+      var view = document.getElementById('chatThreadView');
+      if (inbox) inbox.classList.add('hidden');
+      if (ngp) ngp.classList.add('hidden');
+      if (view) view.classList.remove('hidden');
+      var box = document.getElementById('chatMessages');
+      if (box) {
+        box.innerHTML = '';
+        (ch.messages || []).forEach(function (m) {
+          var el = document.createElement('div');
+          el.className = 'chat-msg';
+          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
+          box.appendChild(el);
+        });
+        box.scrollTop = box.scrollHeight;
+      }
+      updateChatBadge();
+    }
+
+    function updateChatBadge() {
+      var total = 0;
+      Object.keys(chatChannels).forEach(function (k) { total += chatChannels[k].unread || 0; });
+      var badge = document.getElementById('railChatBadge');
+      if (badge) {
+        badge.textContent = total ? String(total) : '';
+        badge.classList.toggle('hidden', !total);
+      }
+    }
+
+    document.getElementById('chatThreadBack') && document.getElementById('chatThreadBack').addEventListener('click', showChatInbox);
+    document.getElementById('chatNewGroupBtn') && document.getElementById('chatNewGroupBtn').addEventListener('click', function () {
+      document.getElementById('chatInbox') && document.getElementById('chatInbox').classList.add('hidden');
+      document.getElementById('chatThreadView') && document.getElementById('chatThreadView').classList.add('hidden');
+      document.getElementById('chatNewGroupPanel') && document.getElementById('chatNewGroupPanel').classList.remove('hidden');
+      var list = document.getElementById('newGroupMemberList');
+      if (!list) return;
+      list.innerHTML = '';
+      var selfId = currentMeeting && currentMeeting.participantId;
+      (participants || []).forEach(function (p) {
+        var id = p.id || p.participantId;
+        if (!id || id === selfId) return;
+        var li = document.createElement('li');
+        li.innerHTML = '<label><input type="checkbox" data-pid="' + id + '"> ' + escapeHtml(p.name || id) + '</label>';
+        list.appendChild(li);
+      });
+    });
+    document.getElementById('chatNewGroupBack') && document.getElementById('chatNewGroupBack').addEventListener('click', showChatInbox);
+    document.getElementById('newGroupCreateBtn') && document.getElementById('newGroupCreateBtn').addEventListener('click', function () {
+      var name = ((document.getElementById('newGroupName') && document.getElementById('newGroupName').value) || '').trim() || 'Group';
+      var ids = [];
+      document.querySelectorAll('#newGroupMemberList input:checked').forEach(function (i) { ids.push(i.getAttribute('data-pid')); });
+      if (!ids.length) return;
+      var gid = 'grp:' + Date.now();
+      chatChannels[gid] = { id: gid, title: name, members: ids, messages: [], unread: 0, lastText: '', lastAt: Date.now() };
+      if (typeof sendWS === 'function') sendWS({ type: 'group-create', groupId: gid, title: name, members: ids });
+      openChatChannel(gid);
+    });
+
+    var chatFormEl = document.getElementById('chatForm');
+    if (chatFormEl && !chatFormEl.__inboxBound) {
+      chatFormEl.__inboxBound = true;
+      chatFormEl.addEventListener('submit', function (e) {
+        if (!activeChannelId || activeChannelId === 'everyone') return;
+        e.preventDefault();
+        e.stopPropagation();
+        var input = document.getElementById('chatInput');
+        var text = (input && input.value || '').trim();
+        if (!text) return;
+        var ch = chatChannels[activeChannelId];
+        if (!ch) return;
+        var selfName = 'Me';
+        try {
+          var me = (participants || []).find(function (x) { return x.id === (currentMeeting && currentMeeting.participantId); });
+          if (me) selfName = me.name || 'Me';
+        } catch (_) {}
+        if (ch.peerId && typeof sendWS === 'function') sendWS({ type: 'private-chat', targetId: ch.peerId, text: text });
+        else if (String(ch.id).indexOf('grp:') === 0 && typeof sendWS === 'function') sendWS({ type: 'group-chat', groupId: ch.id, text: text, members: ch.members });
+        var msg = { fromName: selfName, text: text, at: Date.now() };
+        ch.messages.push(msg);
+        ch.lastText = text;
+        ch.lastAt = Date.now();
+        if (input) input.value = '';
+        var box = document.getElementById('chatMessages');
+        if (box) {
+          var el = document.createElement('div');
+          el.className = 'chat-msg';
+          el.innerHTML = '<strong>' + escapeHtml(msg.fromName) + ':</strong> ' + escapeHtml(msg.text);
+          box.appendChild(el);
+          box.scrollTop = box.scrollHeight;
+        }
+      }, true);
+    }
+
+    window.__meetNotePublicChat = function (text, fromName) {
+      var ch = chatChannels.everyone;
+      ch.lastText = text || '';
+      ch.lastAt = Date.now();
+      ch.messages.push({ fromName: fromName || '', text: text || '', at: Date.now() });
+      if (activeChannelId !== 'everyone') ch.unread = (ch.unread || 0) + 1;
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    window.__meetOpenDm = function (id, name) {
+      var key = 'dm:' + id;
+      if (!chatChannels[key]) {
+        chatChannels[key] = { id: key, title: name || id, peerId: id, messages: [], unread: 0, lastText: '', lastAt: 0 };
+      }
+      if (openPanel !== 'chat') togglePanel('chat');
+      openChatChannel(key);
+    };
+
+    window.__meetIngestPrivate = function (msg) {
+      var m = msg.message || msg;
+      if (!m) return;
+      var selfId = currentMeeting && currentMeeting.participantId;
+      var otherId = m.fromId === selfId ? m.toId : m.fromId;
+      var otherName = m.fromId === selfId ? m.toName : m.fromName;
+      if (!otherId) return;
+      var key = 'dm:' + otherId;
+      if (!chatChannels[key]) chatChannels[key] = { id: key, title: otherName || otherId, peerId: otherId, messages: [], unread: 0, lastText: '', lastAt: 0 };
+      chatChannels[key].messages.push(m);
+      chatChannels[key].lastText = m.text || '';
+      chatChannels[key].lastAt = m.at || Date.now();
+      chatChannels[key].title = otherName || chatChannels[key].title;
+      if (activeChannelId !== key) chatChannels[key].unread = (chatChannels[key].unread || 0) + 1;
+      else {
+        var box = document.getElementById('chatMessages');
+        if (box) {
+          var el = document.createElement('div');
+          el.className = 'chat-msg';
+          el.innerHTML = '<strong>' + escapeHtml(m.fromName || '') + ':</strong> ' + escapeHtml(m.text || '');
+          box.appendChild(el);
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+      updateChatBadge();
+      var inbox = document.getElementById('chatInbox');
+      if (inbox && !inbox.classList.contains('hidden')) renderChatInbox();
+    };
+
+    var stageChatTop = document.getElementById('stageChatBtnTop');
+    if (stageChatTop) stageChatTop.addEventListener('click', function () { togglePanel('chat'); });
+    var stageRec = document.getElementById('stageRecordBtn');
+    if (stageRec) stageRec.addEventListener('click', function () {
+      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) return;
+      var m = document.getElementById('recordModal');
+      if (m) m.classList.remove('hidden');
+    });
+
+
+    function showTab(name) {
+      document.querySelectorAll('.side-tab-panel').forEach(function (p) {
+        var match = p.getAttribute('data-tab') === name || p.id === name + 'Tab';
+        if (match) {
+          p.classList.remove('hidden');
+          p.classList.add('active');
+          p.style.display = 'flex';
+        } else {
+          p.classList.add('hidden');
+          p.classList.remove('active');
+          p.style.display = 'none';
+        }
+      });
+      function bindClick(id, fn) {
+        var el = document.getElementById(id);
+        if (el) el.onclick = fn;
+      }
       if (name === 'security') {
-        const mount = document.getElementById('securityPanelMount');
-        const src = document.getElementById('dynPaneSecurity');
+        var mount = document.getElementById('securityPanelMount');
+        var src = document.getElementById('dynPaneSecurity');
         if (mount && src && !mount.dataset.filled) {
           mount.innerHTML = src.innerHTML;
           mount.dataset.filled = '1';
         }
       }
       if (name === 'more') {
-        const mount = document.getElementById('morePanelMount');
-        const src = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
-        if (mount && src && !mount.dataset.filled) {
-          mount.innerHTML = src.innerHTML;
-          mount.dataset.filled = '1';
+        var mount2 = document.getElementById('morePanelMount');
+        var src2 = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
+        if (mount2 && src2 && !mount2.dataset.filled) {
+          mount2.innerHTML = src2.innerHTML;
+          mount2.dataset.filled = '1';
         }
       }
-      if (name === 'media') refreshMicDevices();
-      if (name === 'room') refreshRoomRaised();
+      if (name === 'media') {
+        try { refreshMicDevices(); } catch (_) {}
+        bindClick('mediaMicToggle', function () { if (typeof toggleMic === 'function') toggleMic(); });
+        bindClick('mediaShareBtn', function () { var s = document.getElementById('shareBtn'); if (s) s.click(); });
+        bindClick('mediaRecordBtn', function () { var m = document.getElementById('recordModal'); if (m) m.classList.remove('hidden'); });
+      }
+      if (name === 'room') {
+        try { refreshRoomRaised(); } catch (_) {}
+        bindClick('roomCopyLinkBtn', function () {
+          var box = document.getElementById('roomLinkBox');
+          var inp = document.getElementById('roomLinkInput');
+          var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+          if (inp) inp.value = link;
+          if (box) box.classList.remove('hidden');
+          try { navigator.clipboard.writeText(link); } catch (_) {}
+        });
+        bindClick('roomHandBtn', function () {
+          var h = document.getElementById('handBtn') || document.getElementById('raiseHandBtn');
+          if (h) h.click();
+        });
+        bindClick('roomMuteAllBtn', function () { muteAll(); });
+        document.querySelectorAll('#roomTab .rail-open-panel').forEach(function (b) {
+          b.onclick = function () {
+            var g = b.getAttribute('data-goto');
+            if (g) { openPanel = null; togglePanel(g); }
+          };
+        });
+      }
+      if (name === 'account') {
+        bindClick('accThemeBtn', function () { var e = document.getElementById('themeToggle'); if (e) e.click(); });
+        bindClick('accHistoryBtn', function () { var e = document.getElementById('historyBtn'); if (e) e.click(); });
+        bindClick('accAuthBtn', function () {
+          var a = document.getElementById('loginBtn') || document.getElementById('logoutBtn');
+          if (a) a.click();
+        });
+        bindClick('accLeaveBtn', function () {
+          if (typeof leaveMeeting === 'function') leaveMeeting();
+          else { var e = document.getElementById('leaveBtn'); if (e) e.click(); }
+        });
+        bindClick('accEndBtn', function () { var e = document.getElementById('endMeetBtn'); if (e) e.click(); });
+      }
       if (name === 'chat') {
-        const mode = window.__railChatMode || 'group';
-        setChatMode(mode);
+        if (typeof showChatInbox === 'function') showChatInbox();
       }
       if (name === 'notifications') {
         try { if (typeof renderNotifications === 'function') renderNotifications(); } catch (_) {}
-        try { if (typeof window.__meetRefreshNotifs === 'function') window.__meetRefreshNotifs(); } catch (_) {}
       }
-      // also click legacy side-tab for wiring
-      const legacy = document.querySelector('.side-tab[data-tab="' + name + '"]');
-      if (legacy) {
-        try { legacy.click(); } catch (_) {}
+      if (['people', 'notifications', 'notes', 'timeline'].indexOf(name) >= 0) {
+        var legacy = document.querySelector('.side-tab[data-tab="' + name + '"]');
+        if (legacy) { try { legacy.click(); } catch (_) {} }
       }
     }
 
@@ -8038,10 +8306,6 @@
         document.getElementById('fullscreenBtn')?.click();
         return;
       }
-      if (btn.id === 'stageChatBtn') {
-        togglePanel('chat');
-        return;
-      }
       const emoji = btn.getAttribute('data-emoji');
       if (!emoji) return;
       const now = Date.now();
@@ -8181,13 +8445,19 @@
       const mini = document.getElementById('recMiniControls');
       if (!mini) return;
       const active = recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused');
-      mini.classList.toggle('hidden', !active);
+      if (mini) mini.classList.remove('hidden');
       const pauseBtn = document.getElementById('recPauseBtn');
-      if (pauseBtn && recordingState) {
-        pauseBtn.innerHTML = recordingState.status === 'paused'
-          ? '<i class="fa-solid fa-play"></i>'
-          : '<i class="fa-solid fa-pause"></i>';
+      const stopWrap = mini && mini.querySelector('.rec-mini-hover');
+      const recDot = document.getElementById('stageRecordBtn');
+      if (pauseBtn) {
+        pauseBtn.classList.toggle('hidden', !active);
+        if (active && recordingState) {
+          pauseBtn.innerHTML = recordingState.status === 'paused'
+            ? '<i class="fa-solid fa-play"></i>'
+            : '<i class="fa-solid fa-pause"></i>';
+        }
       }
+      if (recDot) recDot.classList.toggle('hidden', !!active);
     }, 500);
   })();
 

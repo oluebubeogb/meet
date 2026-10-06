@@ -1,6 +1,6 @@
 {
   "name": "meet",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Meet Phase 1+2A/2B \u2014 Postgres, Artifacts, private chat, notes, whiteboard, breakouts",
   "main": "server.js",
   "scripts": {
