@@ -6,9 +6,9 @@
   <title>Meet — Collab Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=Caveat:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=20261002mobileFirstK">
+  <link rel="stylesheet" href="styles.css?v=20261006slimRail">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>">
 </head>
 <body>
@@ -355,10 +355,43 @@
       </div>
     </section>
 
-    <main id="meetingView" class="layout hidden">
+    <main id="meetingView" class="layout hidden meet-rail-layout">
+      <!-- COL1: slim icon rail -->
+      <aside class="meet-icon-rail" id="meetIconRail" aria-label="Meeting tools">
+        <div class="rail-group rail-brand">
+          <button type="button" class="rail-btn" id="railHomeLogo" title="Meet"><i class="fa-solid fa-handshake"></i></button>
+        </div>
+        <div class="rail-group">
+          <button type="button" class="rail-btn rail-panel" data-panel="notifications" title="Notifications"><i class="fa-regular fa-bell"></i><span class="rail-badge hidden" id="railNotifBadge"></span></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="people" title="People"><i class="fa-solid fa-users"></i><span class="rail-badge" id="railPeopleBadge">1</span></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="chat" title="Group chat"><i class="fa-regular fa-comments"></i><span class="rail-badge hidden" id="railChatBadge"></span></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="private" title="Private chat"><i class="fa-regular fa-envelope"></i></button>
+          <button type="button" class="rail-btn rail-panel notes-desktop-only" data-panel="notes" title="Notes"><i class="fa-solid fa-note-sticky"></i></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="timeline" title="Images"><i class="fa-solid fa-images"></i></button>
+        </div>
+        <div class="rail-group">
+          <button type="button" class="rail-btn" id="railRecordBtn" title="Record"><i class="fa-solid fa-circle" style="color:#e5484d;font-size:0.65rem"></i></button>
+          <button type="button" class="rail-btn" id="railMicBtn" title="Mic"><i class="fa-solid fa-microphone"></i></button>
+          <button type="button" class="rail-btn" id="railShareBtn" title="Share screen"><i class="fa-solid fa-display"></i></button>
+          <button type="button" class="rail-btn" id="railHandBtn" title="Raise hand"><i class="fa-solid fa-hand"></i></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="security" title="Security"><i class="fa-solid fa-shield-halved"></i></button>
+        </div>
+        <div class="rail-group rail-bottom">
+          <button type="button" class="rail-btn" id="railHistoryBtn" title="History"><i class="fa-solid fa-clock-rotate-left"></i></button>
+          <button type="button" class="rail-btn" id="railAuthBtn" title="Account"><i class="fa-regular fa-user"></i></button>
+          <button type="button" class="rail-btn" id="railShareLinkBtn" title="Copy link"><i class="fa-solid fa-link"></i></button>
+          <button type="button" class="rail-btn" id="railThemeBtn" title="Theme"><i class="fa-solid fa-moon"></i></button>
+          <button type="button" class="rail-btn" id="railFsBtn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+          <button type="button" class="rail-btn rail-panel" data-panel="more" title="More"><i class="fa-solid fa-ellipsis"></i></button>
+          <button type="button" class="rail-btn rail-leave" id="railLeaveBtn" title="Leave"><i class="fa-solid fa-phone-slash"></i></button>
+          <button type="button" class="rail-btn rail-end danger hidden" id="railEndBtn" title="End for all"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </aside>
+      <!-- COL2: expandable panel -->
+      <section class="meet-side-drawer hidden" id="meetSideDrawer">
       <section class="col col-1" id="col1">
         <div class="panel side-panel people-panel">
-          <nav class="side-tabs" role="tablist">
+          <nav class="side-tabs hidden-rail-tabs" role="tablist">
             <button type="button" class="side-tab active" data-tab="people" role="tab" aria-selected="true" title="People">
               <i class="fa-solid fa-users"></i> <span class="tab-label">People</span>
               <span id="participantCount" class="count-badge">1</span>
@@ -392,7 +425,7 @@
                 <span id="waitingBannerText">0 people want to join</span>
                 <button type="button" id="reviewWaitingBtn" class="btn small-btn">Review</button>
               </div>
-              <div class="people-section-label" id="inMeetingLabel">In meeting</div>
+              <div class="people-section-label hidden" id="inMeetingLabel"></div>
               <ul class="participant-list" id="participantList"></ul>
               <div class="people-section-label hidden" id="raisedHandsLabel">Raised hands</div>
               <ul class="participant-list raised-list" id="raisedHandsList"></ul>
@@ -407,12 +440,8 @@
                 <form class="chat-form" id="chatForm">
                   <div class="chat-form-row chat-form-row-input">
 
-              <div class="chat-mode-tabs" id="chatModeTabs">
-                <button type="button" class="chat-mode-btn active" id="chatModePublic" data-mode="public">Everyone</button>
-                <button type="button" class="chat-mode-btn" id="chatModePrivate" data-mode="private">Private</button>
-              </div>
               <div class="private-chat-target hidden" id="privateChatTarget">
-                <select id="privateChatSelect"><option value="">Select participant…</option></select>
+                <select id="privateChatSelect" aria-label="Chat with"><option value="">Someone…</option></select>
               </div>
                     <input id="chatInput" type="text" maxlength="2000" placeholder=" Message... " autocomplete="off">
                     <button type="submit" class="btn icon-btn chat-send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
@@ -453,41 +482,31 @@
             
             <!-- NOTES TAB (desktop sidebar) -->
             <div class="side-tab-panel hidden notes-desktop-only" id="notesTab" data-tab="notes" role="tabpanel">
-              <div class="notes-toolbar">
-                <strong>Personal notes</strong>
-                <button type="button" id="liveNotesSave" class="btn small-btn primary-btn">Save</button>
-              </div>
-              <p class="notes-hint">Private to you. Saved to this meeting’s Artifact when available.</p>
-              <textarea id="liveNotesEditor" placeholder="Jot notes during the call…"></textarea>
-              <div class="notes-toolbar" style="margin-top:0.5rem">
-                <strong>Summary</strong>
-                <button type="button" id="summaryGenerateBtn" class="btn small-btn">Generate draft</button>
-              </div>
-              <div id="meetingSummaryBox" class="summary-box" contenteditable="true" data-placeholder="Meeting summary…"></div>
-              <button type="button" id="summarySaveBtn" class="btn small-btn">Save summary</button>
-            </div>
-            <div class="notes-mobile-soon" id="notesMobileSoon">
-              <p><i class="fa-solid fa-mobile-screen"></i> Notes on mobile — coming soon. Use desktop for the sidebar notes panel.</p>
+              <textarea id="liveNotesEditor" placeholder="Notes…"></textarea>
+              <div id="meetingSummaryBox" class="summary-box hidden" contenteditable="true"></div>
+              <button type="button" id="liveNotesSave" class="hidden" tabindex="-1" aria-hidden="true"></button>
+              <button type="button" id="summaryGenerateBtn" class="hidden" tabindex="-1"></button>
+              <button type="button" id="summarySaveBtn" class="hidden" tabindex="-1"></button>
             </div>
 
             <!-- TIMELINE TAB (desktop sidebar 4th panel) -->
             <div class="side-tab-panel hidden" id="timelineTab" data-tab="timeline" role="tabpanel">
               <div class="screen-timeline side-timeline" id="sideScreenTimeline">
                 <div class="st-header">
-                  <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
+                  <span class="st-title"><i class="fa-solid fa-images"></i></span>
                   <label class="st-slideshow-toggle" title="Slideshow on/off">
                     <input type="checkbox" id="stSlideshowToggleSide">
                     <span>Slideshow</span>
                   </label>
                 </div>
                 <div class="st-slots" id="stSlotsSide">
-                  <p class="st-empty">No timeline images yet.</p>
+                  <p class="st-empty"></p>
                 </div>
                 <div class="st-actions host-cohost-only hidden" id="stActionsSide">
                   <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnSide"><i class="fa-solid fa-plus"></i> Add images</button>
                   <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
                 </div>
-                <p class="st-empty st-hint">Hosts can allow participants/guests to add images from the people menu.</p>
+                <p class="st-empty st-hint"></p>
               </div>
             </div>
           </div>
@@ -504,7 +523,9 @@
         </div>
       </section>
 
-      <div class="resizer" id="resizer" title="Drag to resize"></div>
+      </section><!-- /col1 -->
+      </section><!-- /meet-side-drawer -->
+      <div class="resizer hidden" id="resizer" title="Drag to resize"></div>
 
       <section class="col col-2" id="col2">
         <div class="panel">
@@ -519,12 +540,9 @@
             </div>
             <div class="meeting-title-bar desktop-only">
               <span id="meetingNameLabel" class="meeting-name-label hidden"></span>
-              <span id="meetingDurationTimer" class="meeting-duration-timer hidden" title="Meeting duration">00:00</span>
+              
               <span id="recordingBadge" class="recording-badge hidden"><span class="rec-dot"></span> <span id="recordingStatusLabel">Recording</span> <span id="recordingTimer"></span></span>
-              <span id="recControlsBar" class="rec-controls-bar hidden">
-                <button type="button" id="recPauseBtn" class="btn btn-pause" title="Pause">Pause</button>
-                <button type="button" id="recStopBtn" class="btn btn-stop" title="Stop &amp; save">Stop &amp; save</button>
-              </span>
+              
               <button id="shareLinkBtn" class="btn small-btn hidden" title="Copy invite link" aria-hidden="true">
                 <i class="fa-solid fa-link"></i> Share
               </button>
@@ -535,14 +553,14 @@
             <div class="screen-cards desktop-only" id="screenCards"></div>
             <div class="desktop-screen-timeline desktop-only" id="desktopScreenTimeline">
               <div class="st-header">
-                <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
+                <span class="st-title"><i class="fa-solid fa-images"></i></span>
                 <label class="st-slideshow-toggle" title="Slideshow on/off">
                   <input type="checkbox" id="stSlideshowToggleDesktop">
                   <span>Slideshow</span>
                 </label>
               </div>
               <div class="st-slots" id="stSlotsDesktop">
-                <p class="st-empty" id="stEmptyDesktop">No timeline images. Hosts can add up to 10.</p>
+                <p class="st-empty" id="stEmptyDesktop"></p>
               </div>
               <div class="st-actions host-cohost-only hidden" id="stActionsDesktop">
                 <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtnDesktop"><i class="fa-solid fa-plus"></i> Add images</button>
@@ -593,10 +611,28 @@
                   </button>
                 </div>
               </div>
-              <div id="bigPlaceholder" class="placeholder">
-                <i class="fa-solid fa-desktop big-icon"></i>
-                <p>No screen selected</p>
-                <p class="sub">Click a LIVE card to watch, or share your own</p>
+              <div class="stage-top-chrome" id="stageTopChrome">
+              <div class="stage-cards-cluster" id="stageCardsCluster"></div>
+              <span id="meetingDurationTimer" class="meeting-duration-timer stage-timer" title="Duration">00:00</span>
+              <span id="recMiniControls" class="rec-mini-controls hidden">
+                <button type="button" id="recPauseBtn" class="rec-mini-btn" title="Pause"><i class="fa-solid fa-pause"></i></button>
+                <span class="rec-mini-hover">
+                  <button type="button" id="recStopBtn" class="rec-mini-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                </span>
+              </span>
+            </div>
+            <div class="stage-hover-footer hidden" id="stageHoverChrome">
+              <div class="stage-react-row" id="stageReactRow">
+                <button type="button" class="emoji-btn" data-emoji="😊">😊</button>
+                <button type="button" class="emoji-btn" data-emoji="👍">👍</button>
+                <button type="button" class="emoji-btn" data-emoji="👏">👏</button>
+                <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
+                <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
+                <button type="button" id="stageHandBtn" class="emoji-btn stage-hand" title="Hand"><i class="fa-solid fa-hand"></i></button>
+              </div>
+            </div>
+              <div id="bigPlaceholder" class="placeholder welcome-placeholder">
+                <p class="welcome-caveat">Welcome ❤️</p>
               </div>
               <div class="big-view-label" id="bigViewLabel"></div>
               <div id="reactionOverlay" class="reaction-overlay" aria-hidden="true"></div>
@@ -627,14 +663,14 @@
                 <div class="dyn-pane" data-pane="screens" id="dynPaneScreens">
                   <div class="screen-timeline" id="screenTimeline">
                     <div class="st-header">
-                      <span class="st-title"><i class="fa-solid fa-images"></i> Screen timeline</span>
+                      <span class="st-title"><i class="fa-solid fa-images"></i></span>
                       <label class="st-slideshow-toggle" title="Slideshow on/off">
                         <input type="checkbox" id="stSlideshowToggle">
                         <span>Slideshow</span>
                       </label>
                     </div>
                     <div class="st-slots" id="stSlots">
-                      <p class="st-empty" id="stEmpty">No timeline images yet. Hosts can add up to 10 images.</p>
+                      <p class="st-empty" id="stEmpty"> Hosts can add up to 10 images.</p>
                     </div>
                     <div class="st-actions host-cohost-only hidden" id="stActions">
                       <button type="button" class="btn small-btn primary-btn" id="stAddImagesBtn"><i class="fa-solid fa-plus"></i> Add images</button>
@@ -829,8 +865,8 @@
       </div>
     </div>
 
-    <footer class="footer">
-      <span>Meeting the CisTech way...</span>
+    <footer class="footer meeting-home-footer">
+      <span></span>
     </footer>
   </div>
 
@@ -1189,6 +1225,6 @@
   <script src="js/features/mute.js?v=20260924secMob1"></script>
   <script src="js/features/device-icons.js?v=20260924secMob1"></script>
   <script src="js/main.js?v=20260924secMob1"></script>
-  <script src="js/core/app.js?v=20261006scopeFixRecNotes"></script>
+  <script src="js/core/app.js?v=20261006slimRail"></script>
 </body>
 </html>

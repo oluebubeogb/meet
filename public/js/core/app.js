@@ -1509,7 +1509,7 @@
     // restore default placeholder text
     if (bigPlaceholder) {
       const p = bigPlaceholder.querySelector('p');
-      if (p) p.textContent = 'No screen selected';
+      if (p) p.textContent = 'Welcome ❤️'; p.className = 'welcome-caveat';
     }
     const contentView = document.getElementById('contentView');
     if (contentView) contentView.classList.add('hidden');
@@ -7352,7 +7352,7 @@
     if (chatInput) {
       chatInput.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter' || e.shiftKey) return;
-        if (chatMode !== 'private') return;
+        if ((window.__railChatMode || chatMode) !== 'private') return;
         e.preventDefault();
         e.stopPropagation();
         if (!privateTargetId) {
@@ -7579,6 +7579,23 @@
     window.__meetFlushRecordingOnLeave = function () {
       saveLiveNotesSilent();
       try {
+        const ed = document.getElementById('liveNotesEditor');
+        const notes = (ed && ed.value) || localStorage.getItem(notesStorageKey()) || '';
+        const summary = localStorage.getItem(summaryStorageKey()) || '';
+        if (notes.trim() || summary.trim()) {
+          let body = notes.trim();
+          if (summary.trim()) body += (body ? '\n\n' : '') + '----------\n' + summary.trim();
+          const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'meet-notes-' + ((currentMeeting && currentMeeting.code) || 'session') + '.txt';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }
+      } catch (e) { console.warn('notes export', e); }
+
+      try {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           stopClientCaptureAndDownload();
         } else if (recordedChunks.length) {
@@ -7673,6 +7690,221 @@
     const origLeave = leaveMeeting;
     // leaveMeeting is async function in scope — wrap via reassignment if possible
     // We call flush from patched leaveMeeting below
+  })();
+
+
+
+
+  // ========== Slim rail UI controller ==========
+  (function meetRailUI() {
+    const drawer = document.getElementById('meetSideDrawer');
+    const rail = document.getElementById('meetIconRail');
+    if (!rail) return;
+    let openPanel = null;
+
+    function showPanel(name) {
+      // map private → chat with private mode
+      const tabName = name === 'private' ? 'chat' : name;
+      if (name === 'private') {
+        const sel = document.getElementById('privateChatTarget');
+        if (sel) sel.classList.remove('hidden');
+        try {
+          if (typeof window.__meetChatMode === 'function') { /* mode via click sim */ }
+        } catch (_) {}
+        // force private mode flag
+        window.__railChatMode = 'private';
+      } else if (name === 'chat') {
+        const sel = document.getElementById('privateChatTarget');
+        if (sel) sel.classList.add('hidden');
+        window.__railChatMode = 'public';
+      }
+      document.querySelectorAll('.side-tab-panel').forEach((p) => {
+        const is = p.getAttribute('data-tab') === tabName || p.id === tabName + 'Tab';
+        p.classList.toggle('hidden', !is);
+        p.classList.toggle('active', is);
+      });
+      // security/more live in dyn panes or drawers
+      if (name === 'security') {
+        document.querySelectorAll('.side-tab-panel').forEach((p) => p.classList.add('hidden'));
+        let sec = document.getElementById('railSecurityMount');
+        if (!sec) {
+          sec = document.createElement('div');
+          sec.id = 'railSecurityMount';
+          sec.className = 'side-tab-panel active';
+          const src = document.getElementById('dynPaneSecurity') || document.getElementById('securityDrawer');
+          if (src) sec.appendChild(src.cloneNode(true));
+          document.querySelector('.side-tab-panels')?.appendChild(sec);
+        }
+        sec.classList.remove('hidden');
+      }
+      if (name === 'more') {
+        document.querySelectorAll('.side-tab-panel').forEach((p) => p.classList.add('hidden'));
+        let more = document.getElementById('railMoreMount');
+        if (!more) {
+          more = document.createElement('div');
+          more.id = 'railMoreMount';
+          more.className = 'side-tab-panel active';
+          const src = document.getElementById('dynPaneMore') || document.getElementById('phase2MoreInject');
+          if (src) more.appendChild(src.cloneNode(true));
+          else more.innerHTML = '<div style="padding:1rem;opacity:.7">More</div>';
+          document.querySelector('.side-tab-panels')?.appendChild(more);
+        }
+        more.classList.remove('hidden');
+      }
+    }
+
+    function togglePanel(name) {
+      if (!drawer) return;
+      if (openPanel === name) {
+        drawer.classList.add('hidden');
+        openPanel = null;
+        rail.querySelectorAll('.rail-btn.active').forEach((b) => b.classList.remove('active'));
+        return;
+      }
+      openPanel = name;
+      drawer.classList.remove('hidden');
+      rail.querySelectorAll('.rail-btn.active').forEach((b) => b.classList.remove('active'));
+      rail.querySelector('.rail-btn[data-panel="' + name + '"]')?.classList.add('active');
+      showPanel(name);
+    }
+
+    rail.querySelectorAll('.rail-btn.rail-panel').forEach((btn) => {
+      btn.addEventListener('click', () => togglePanel(btn.getAttribute('data-panel')));
+    });
+
+    // Wire action icons to existing controls
+    const click = (id) => document.getElementById(id)?.click();
+    document.getElementById('railMicBtn')?.addEventListener('click', () => click('micBtn') || (typeof toggleMic === 'function' && toggleMic()));
+    document.getElementById('railShareBtn')?.addEventListener('click', () => click('shareBtn'));
+    document.getElementById('railHandBtn')?.addEventListener('click', () => click('handBtn') || click('raiseHandBtn'));
+    document.getElementById('railLeaveBtn')?.addEventListener('click', () => {
+      if (typeof leaveMeeting === 'function') leaveMeeting();
+      else click('leaveBtn');
+    });
+    document.getElementById('railEndBtn')?.addEventListener('click', () => click('endMeetBtn') || click('endMeetBtnTop'));
+    document.getElementById('railShareLinkBtn')?.addEventListener('click', () => click('shareLinkBtn') || click('copyCodeBtn') || click('shareLinkBtnTop'));
+    document.getElementById('railThemeBtn')?.addEventListener('click', () => click('themeToggle'));
+    document.getElementById('railFsBtn')?.addEventListener('click', () => click('fullscreenBtn'));
+    document.getElementById('railHistoryBtn')?.addEventListener('click', () => click('historyBtn'));
+    document.getElementById('railAuthBtn')?.addEventListener('click', () => click('loginBtn') || click('logoutBtn'));
+    document.getElementById('railRecordBtn')?.addEventListener('click', () => {
+      if (recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused')) {
+        // open mini already visible — toggle pause
+        document.getElementById('recPauseBtn')?.click();
+      } else {
+        document.getElementById('recordModal')?.classList.remove('hidden');
+      }
+    });
+
+    // Sync people badge
+    setInterval(() => {
+      try {
+        const n = Array.isArray(participants) ? participants.length : 0;
+        const b = document.getElementById('railPeopleBadge');
+        const c = document.getElementById('participantCount');
+        if (b) b.textContent = String(n || (c && c.textContent) || '');
+        const end = document.getElementById('railEndBtn');
+        if (end) end.classList.toggle('hidden', !(myRole === 'host' || currentMeeting?.isHost));
+      } catch (_) {}
+    }, 1500);
+
+    // Stage hover reactions footer
+    let hideTimer = null;
+    const stage = document.getElementById('bigView') || document.querySelector('.big-view') || document.getElementById('col2');
+    const footer = document.getElementById('stageHoverChrome');
+    function showFooter() {
+      if (!footer) return;
+      footer.classList.remove('hidden');
+      footer.classList.add('visible');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        footer.classList.remove('visible');
+      }, 2200);
+    }
+    if (stage) {
+      stage.addEventListener('mousemove', showFooter);
+      stage.addEventListener('mouseleave', () => {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => footer?.classList.remove('visible'), 400);
+      });
+    }
+    document.getElementById('stageReactRow')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.emoji-btn');
+      if (!btn) return;
+      if (btn.id === 'stageHandBtn') {
+        document.getElementById('railHandBtn')?.click();
+        return;
+      }
+      const emoji = btn.getAttribute('data-emoji');
+      if (emoji && typeof sendWS === 'function') sendWS({ type: 'reaction', emoji });
+    });
+
+    // Circular screen cards near timer
+    function initials(name) {
+      const s = String(name || '?').trim();
+      const parts = s.split(/\s+/);
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+      return s.slice(0, 2).toUpperCase();
+    }
+    function refreshStageCards() {
+      const cluster = document.getElementById('stageCardsCluster');
+      if (!cluster) return;
+      cluster.innerHTML = '';
+      const cards = document.querySelectorAll('#screenCards .screen-card, #screenCards [data-participant]');
+      const items = [];
+      if (cards.length) {
+        cards.forEach((c, i) => {
+          const name = c.getAttribute('data-name') || c.querySelector('.name, .label')?.textContent || 'U' + i;
+          items.push({ name, live: c.classList.contains('live') || !!c.querySelector('video'), el: c });
+        });
+      } else if (Array.isArray(participants)) {
+        participants.forEach((p) => {
+          items.push({ name: p.name || p.displayName || '?', live: !!p.sharing, id: p.id });
+        });
+      }
+      items.slice(0, 8).forEach((it, idx) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'stage-card-circle' + (it.live ? ' live' : '') + (idx > 2 ? ' stage-card-extra' : '');
+        b.textContent = initials(it.name);
+        b.title = it.name;
+        b.addEventListener('click', () => {
+          try { it.el?.click(); } catch (_) {}
+        });
+        cluster.appendChild(b);
+      });
+    }
+    setInterval(refreshStageCards, 2000);
+
+    // Recording mini controls visibility
+    const _urb = typeof updateRecordingBadge === 'function' ? updateRecordingBadge : null;
+    if (_urb) {
+      // wrap after definition — patch via interval on recordingState
+    }
+    setInterval(() => {
+      const mini = document.getElementById('recMiniControls');
+      if (!mini) return;
+      const active = recordingState && (recordingState.status === 'recording' || recordingState.status === 'paused');
+      mini.classList.toggle('hidden', !active);
+      const pauseBtn = document.getElementById('recPauseBtn');
+      if (pauseBtn && recordingState) {
+        pauseBtn.innerHTML = recordingState.status === 'paused'
+          ? '<i class="fa-solid fa-play"></i>'
+          : '<i class="fa-solid fa-pause"></i>';
+      }
+    }, 500);
+
+    // Artifact modes from URL
+    try {
+      const path = location.pathname;
+      const params = new URLSearchParams(location.search);
+      if (path.match(/^\/m\/[^/]+\/[^/]+/)) {
+        document.body.classList.add('artifact-readonly');
+      }
+      if (params.get('restart') === '1') {
+        document.body.classList.add('artifact-restarted');
+      }
+    } catch (_) {}
   })();
 
 
