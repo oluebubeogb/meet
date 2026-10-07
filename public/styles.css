@@ -7071,17 +7071,20 @@ html.dark .side-screen-cards .screen-card {
 }
 
 
-/* === Stage chrome hover: show top controls + footer together === */
+/* === Stage chrome hover: show top controls + footer together ===
+   Only .visible (JS) controls visibility — same idle window as flying-reaction (~2.1s).
+   Do not keep chrome stuck on :hover of the whole stage. */
 .stage-top-chrome.stage-hover-chrome {
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.25s ease;
 }
-.stage-top-chrome.stage-hover-chrome.visible,
-.big-view:hover .stage-top-chrome.stage-hover-chrome,
-#bigView:hover .stage-top-chrome.stage-hover-chrome {
+.stage-top-chrome.stage-hover-chrome.visible {
   opacity: 1;
   pointer-events: auto;
+}
+.stage-hover-footer {
+  transition: opacity 0.25s ease;
 }
 .stage-top-chrome .stage-leave-btn {
   color: #fff !important;
@@ -7386,5 +7389,132 @@ html.dark .side-screen-cards .screen-card {
   .mobile-meet-header,
   .dynamic-panel {
     display: none !important;
+  }
+}
+
+/* =========================================================
+   LANDSCAPE (tablet/phone): NEVER stack col1 over the stage.
+   Rail + drawer + stage coexist horizontally.
+   ========================================================= */
+@media (orientation: landscape) and (max-width: 1200px) {
+  /* Kill any portrait/narrow rules that force a vertical stack */
+  body.in-meeting-mobile #meetingView.meet-rail-layout:not(.hidden),
+  body.in-meeting-mobile #meetingView:not(.hidden),
+  #meetingView.meet-rail-layout:not(.hidden),
+  #meetingView.layout:not(.hidden),
+  .layout:not(.hidden)#meetingView {
+    display: grid !important;
+    grid-template-columns: 52px auto minmax(0, 1fr) !important;
+    grid-template-rows: 1fr !important;
+    flex-direction: row !important;
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+    gap: 0 !important;
+  }
+
+  /* Icon rail stays as a vertical strip on the left — not a full-width block */
+  #meetingView.meet-rail-layout .meet-icon-rail,
+  #meetingView .meet-icon-rail,
+  #meetIconRail {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    width: 52px !important;
+    min-width: 52px !important;
+    max-width: 52px !important;
+    height: 100% !important;
+    align-self: stretch !important;
+    border-right: 1px solid rgba(0,0,0,0.06);
+  }
+
+  /* Side drawer sits beside the rail when open; never full-width stack */
+  #meetingView.meet-rail-layout .meet-side-drawer:not(.hidden),
+  #meetingView #meetSideDrawer:not(.hidden) {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    width: min(300px, 34vw) !important;
+    min-width: 200px !important;
+    max-width: 36vw !important;
+    height: 100% !important;
+    align-self: stretch !important;
+    border-right: 1px solid rgba(0,0,0,0.06);
+  }
+  #meetingView.meet-rail-layout .meet-side-drawer.hidden,
+  #meetingView #meetSideDrawer.hidden {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    border: none !important;
+  }
+
+  /* Col2 / stage fills remaining horizontal space */
+  #meetingView.meet-rail-layout .col-2,
+  #meetingView.meet-rail-layout #col2,
+  #meetingView .col-2,
+  #meetingView #col2 {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: 100% !important;
+    flex: 1 1 auto !important;
+    align-self: stretch !important;
+  }
+
+  /* When drawer is hidden, let stage span columns 2–3 */
+  #meetingView.meet-rail-layout:has(#meetSideDrawer.hidden) .col-2,
+  #meetingView.meet-rail-layout:has(#meetSideDrawer.hidden) #col2 {
+    grid-column: 2 / -1 !important;
+  }
+
+  /* Stage uses remaining height — not a stacked block above/below rail */
+  #meetingView.meet-rail-layout #bigView,
+  #meetingView.meet-rail-layout .big-view,
+  #meetingView #bigView,
+  #meetingView .big-view {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    width: 100% !important;
+  }
+
+  /* No mobile portrait chrome in landscape */
+  .mobile-footer-nav,
+  .mobile-meet-header,
+  .dynamic-panel {
+    display: none !important;
+  }
+
+  /* Legacy col1 must not become a full-width stacked panel */
+  #meetingView .col-1,
+  #meetingView #col1 {
+    max-height: none !important;
+    width: auto !important;
+    flex: 0 0 auto !important;
+  }
+}
+
+/* Extra: older max-width rules forced column stack — neutralize in landscape */
+@media (orientation: landscape) and (max-width: 768px) {
+  .layout,
+  #meetingView.layout,
+  #meetingView.meet-rail-layout {
+    flex-direction: row !important;
+  }
+  .layout .col-1,
+  #meetingView .col-1,
+  #col1 {
+    max-height: none !important;
   }
 }

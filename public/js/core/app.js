@@ -10017,6 +10017,9 @@
     const stage = document.getElementById('bigView') || document.querySelector('.big-view') || document.getElementById('col2');
     const footer = document.getElementById('stageHoverChrome');
     const topChrome = document.getElementById('stageTopChrome');
+    // Match flying-reaction lifetime (~2100ms) so timer/record/chat ease out on the same beat
+    var STAGE_CHROME_IDLE_MS = 2100;
+    var STAGE_CHROME_LEAVE_MS = 350;
     function showStageChrome() {
       if (footer) {
         footer.classList.remove('hidden');
@@ -10027,14 +10030,14 @@
       hideTimer = setTimeout(function () {
         footer && footer.classList.remove('visible');
         topChrome && topChrome.classList.remove('visible');
-      }, 2200);
+      }, STAGE_CHROME_IDLE_MS);
     }
     function hideStageChromeSoon() {
       clearTimeout(hideTimer);
       hideTimer = setTimeout(function () {
         footer && footer.classList.remove('visible');
         topChrome && topChrome.classList.remove('visible');
-      }, 400);
+      }, STAGE_CHROME_LEAVE_MS);
     }
     if (stage) {
       stage.addEventListener('mousemove', showStageChrome);
