@@ -4869,24 +4869,46 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
 .mfn-btn {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 42px; height: 42px;
+  width: 44px; height: 44px;
+  flex: 0 0 auto;
   border: none; border-radius: 12px;
   background: transparent; color: var(--text);
-  font-size: 1.05rem; cursor: pointer;
+  font-size: 1.1rem; cursor: pointer;
   transition: background .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
 }
 .mfn-btn:hover, .mfn-btn:focus-visible { background: var(--primary-soft); color: var(--primary); }
 .mfn-btn.active { color: var(--primary); background: var(--primary-soft); }
 .mfn-btn.off, .mfn-btn.muted-state { color: #e74c3c; }
 .mfn-btn.sharing-active { color: var(--primary); }
+.mfn-btn.sharing-active i { color: var(--primary); }
 .mfn-badge {
-  position: absolute; top: 2px; right: 2px;
-  min-width: 16px; height: 16px; padding: 0 4px;
-  border-radius: 8px; font-size: 0.65rem; font-weight: 700;
-  background: var(--primary); color: #fff;
-  display: inline-flex; align-items: center; justify-content: center;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--primary, #4f8cff);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  z-index: 2;
 }
 .mfn-badge.hidden { display: none !important; }
+
+/* 6-item footer spacing */
+.mobile-footer-nav {
+  justify-content: space-evenly;
+  gap: 0;
+}
 
 /* Desktop screen timeline (alongside screen cards) */
 .desktop-screen-timeline {
@@ -4898,8 +4920,11 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
 }
 .desktop-screen-timeline .st-header { margin-bottom: 0.35rem; }
 
-/* Portrait mobile: stage ~30vh 16:9, panel fills rest */
-@media (max-width: 900px) {
+/* =========================================================
+   PORTRAIT mobile (max-width 900 + portrait):
+   header · 30vh stage · dynamic panel (col2 role) · footer nav
+   ========================================================= */
+@media (max-width: 900px) and (orientation: portrait) {
   .mobile-only { display: inline-flex !important; }
   .desktop-only { display: none !important; }
 
@@ -4913,6 +4938,7 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
     max-height: 100dvh !important;
     width: 100vw !important;
     background: var(--bg);
+    overflow: hidden !important;
   }
   body.in-meeting-mobile .topbar,
   body.in-meeting-mobile .footer,
@@ -4932,10 +4958,13 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
     display: none !important;
   }
 
+  /* Hide desktop col1 / resizer — footer nav replaces col1 */
   #meetingView .col-1,
   #meetingView #col1,
   #meetingView .resizer,
-  #meetingView #resizer {
+  #meetingView #resizer,
+  #meetingView .meet-side-drawer,
+  #meetingView #meetSideDrawer {
     display: none !important;
   }
 
@@ -4947,41 +4976,47 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
   }
   #meetingView .col-2,
   #meetingView #col2 {
-    flex: 1 !important;
+    flex: 1 1 auto !important;
     width: 100% !important;
     min-height: 0 !important;
+    max-height: none !important;
     display: flex !important;
     flex-direction: column !important;
+    overflow: hidden !important;
   }
   #meetingView .col-2 .panel,
   #meetingView #col2 .panel {
     flex: 1; min-height: 0;
     display: flex; flex-direction: column;
     border: none; border-radius: 0;
+    overflow: hidden;
   }
   #meetingView .meeting-content {
-    flex: 1; min-height: 0;
+    flex: 1 1 auto; min-height: 0;
     display: flex; flex-direction: column;
     padding: 0 !important;
+    overflow: hidden !important;
   }
 
   .meet-stage-row {
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
-  /* Stage: ~30vh, force 16:9 aspect when possible */
+  /* Stage: exactly 30vh */
   #meetingView .big-view {
-    flex: 0 0 auto !important;
-    width: 100%;
-    height: 30vh;
-    max-height: 32vh;
-    min-height: 140px;
-    aspect-ratio: 16 / 9;
+    flex: 0 0 30vh !important;
+    width: 100% !important;
+    height: 30vh !important;
+    max-height: 30vh !important;
+    min-height: 120px !important;
+    aspect-ratio: auto !important;
     border-radius: 0;
     background: #0b0d13;
+    overflow: hidden;
   }
   #meetingView .big-view video,
   #meetingView .big-view .content-view,
@@ -4990,86 +5025,144 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
     width: 100%; height: 100%; object-fit: contain;
   }
 
-  /* Dynamic panel fills remaining space */
-  .dynamic-panel {
-    display: flex;
-    flex: 1 1 auto;
+  /* Dynamic panel = col2 role: fills space between stage and footer */
+  .dynamic-panel,
+  .dynamic-panel.open {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    flex-direction: column !important;
+    border-top: 1px solid var(--border);
+    overflow: hidden !important;
+  }
+  .dynamic-panel-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding: 0.55rem 0.7rem 0.4rem;
+  }
+  .dynamic-panel-title {
+    margin: 0 0 0.45rem;
+    font-size: 0.92rem;
+    font-weight: 650;
+    flex-shrink: 0;
+  }
+  .dyn-pane {
     min-height: 0;
   }
-  .dynamic-panel:not(.open) .dynamic-panel-header {
-    display: none;
-  }
-  .dynamic-panel:not(.open) .dynamic-panel-body {
-    /* show screens pane by default as idle state */
-  }
-  .dynamic-panel:not(.open) .dyn-pane:not([data-pane="screens"]) {
+  .dyn-pane.hidden {
     display: none !important;
   }
 
-  /* Hide on-screen chat overlay button in mobile fullscreen stage */
+  /* Hide stage chat overlay chrome on portrait mobile */
   #meetingView .chat-overlay-btn,
   body.stage-fullscreen .chat-overlay-btn,
   .big-view:fullscreen .chat-overlay-btn {
     display: none !important;
   }
 
-  /* Chat sheet tools always visible */
-  .chat-sheet-body .chat-form {
+  /* Dyn notes */
+  .dyn-notes-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .dyn-notes-editor {
+    flex: 1 1 auto;
+    min-height: 10rem;
+    width: 100%;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.65rem 0.75rem;
+    background: var(--surface-soft, var(--surface));
+    color: var(--text);
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+
+  /* Dyn room items */
+  .dyn-room-item {
+    display: flex !important;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    text-align: left;
+  }
+  .dyn-room-item .mfn-badge {
+    margin-left: auto;
+  }
+
+  /* Chat form in dynamic panel */
+  #dynPaneChat .chat-form,
+  .dyn-pane[data-pane="chat"] .chat-form {
     flex-direction: column;
     gap: 0.35rem;
-    padding: 0.55rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.45rem 0 0.25rem;
   }
-  .chat-sheet-body .chat-form-row-input {
+  #dynPaneChat .chat-form-row-input {
     display: flex; gap: 0.4rem; width: 100%;
   }
-  .chat-sheet-body .chat-form-row-input input {
-    flex: 1;
-  }
-  .chat-sheet-body .chat-form-row-tools {
+  #dynPaneChat .chat-form-row-input input { flex: 1; min-width: 0; }
+  #dynPaneChat .chat-form-row-tools {
     display: flex !important;
     gap: 0.35rem;
     align-items: center;
   }
-  .chat-sheet-body .chat-form-row-tools .btn.icon-btn {
+  #dynPaneChat .chat-form-row-tools .btn.icon-btn {
     width: 40px; height: 40px;
   }
+
+  /* People list in dyn panel scrolls */
+  #dynPanePeople {
+    display: flex !important;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
+  #dynPanePeople.hidden { display: none !important; }
+  #dynParticipantList {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    min-height: 8rem;
+  }
 }
 
-/* Landscape mobile / tablet: stage left (more vw), panel right */
+/* =========================================================
+   LANDSCAPE on narrow screens: desktop view can serve
+   (cols + controls visible; no mobile footer / 30vh stage)
+   ========================================================= */
 @media (max-width: 900px) and (orientation: landscape) {
-  .meet-stage-row {
-    flex-direction: row !important;
-  }
-  #meetingView .big-view {
-    flex: 1 1 62% !important;
-    width: auto !important;
-    height: auto !important;
-    max-height: none !important;
-    min-height: 0 !important;
-    aspect-ratio: auto;
-    align-self: stretch;
+  .mobile-meet-header,
+  .mobile-footer-nav {
+    display: none !important;
   }
   .dynamic-panel {
-    flex: 0 0 38% !important;
-    width: 38%;
-    max-width: 42%;
-    border-top: none;
-    border-left: 1px solid var(--border);
+    display: none !important;
   }
-  .mobile-footer-nav {
-    padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
+  /* Allow desktop chrome when it fits */
+  body.in-meeting-mobile #meetingView:not(.hidden) {
+    position: relative !important;
+    height: auto !important;
+    max-height: none !important;
   }
-  .mobile-meet-header { min-height: 40px; padding: 0.25rem 0.55rem; }
+  body.in-meeting-mobile .topbar {
+    display: flex !important;
+  }
+  #meetingView .col-1,
+  #meetingView #col1 {
+    display: flex !important;
+  }
+  #meetingView .call-controls.desktop-only {
+    display: flex !important;
+  }
+  #meetingView .big-view {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 160px !important;
+    flex: 1 1 auto !important;
+  }
 }
 
-/* Tablets up to 1024 in landscape also prefer split */
-@media (min-width: 701px) and (max-width: 1100px) and (orientation: landscape) {
-  body.in-meeting-mobile .meet-stage-row {
-    flex-direction: row;
-  }
-}
-
-/* Ensure desktop keeps normal layout */
+/* Ensure wide desktop keeps normal layout */
 @media (min-width: 901px) {
   .mobile-meet-header,
   .mobile-footer-nav { display: none !important; }

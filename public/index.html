@@ -785,6 +785,8 @@
                 </div>
                 <div class="dyn-pane hidden" data-pane="chat" id="dynPaneChat"></div>
                 <div class="dyn-pane hidden" data-pane="people" id="dynPanePeople"></div>
+                <div class="dyn-pane hidden" data-pane="notes" id="dynPaneNotes"></div>
+                <div class="dyn-pane hidden" data-pane="room" id="dynPaneRoom"></div>
                 <div class="dyn-pane hidden" data-pane="reactions" id="dynPaneReactions">
                   <div class="reaction-row dyn-reaction-row" id="dynEmojiBar">
                     <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs up">👍</button>
@@ -900,21 +902,21 @@
               </div>
             </div>
 
-            <!-- Mobile footer nav: mic, screen, hand, heart, chat, people, security, 3dots -->
+            <!-- Mobile portrait footer nav: mic, screen share, notes, room, chat, people -->
             <nav class="mobile-footer-nav mobile-only" id="mobileFooterNav" role="toolbar" aria-label="Meeting controls">
               <button type="button" class="mfn-btn" id="mfnMic" title="Microphone" aria-label="Toggle microphone">
                 <i class="fa-solid fa-microphone"></i>
               </button>
-              <button type="button" class="mfn-btn" id="mfnScreen" title="Screens" aria-label="Screens" data-pane="screens">
+              <button type="button" class="mfn-btn" id="mfnScreen" title="Screen share" aria-label="Screen share" data-pane="screens">
                 <i class="fa-solid fa-desktop"></i>
                 <span class="mfn-badge hidden" id="mfnScreenBadge">0</span>
               </button>
-              <button type="button" class="mfn-btn" id="mfnHand" title="Raise hand (hold for list)" aria-label="Raise hand">
-                <i class="fa-solid fa-hand"></i>
-                <span class="mfn-badge hidden" id="mfnHandBadge">0</span>
+              <button type="button" class="mfn-btn" id="mfnNotes" title="Notes" aria-label="Notes" data-pane="notes">
+                <i class="fa-solid fa-note-sticky"></i>
               </button>
-              <button type="button" class="mfn-btn" id="mfnHeart" title="React (tap heart, hold for more)" aria-label="Reactions">
-                <i class="fa-solid fa-heart"></i>
+              <button type="button" class="mfn-btn" id="mfnRoom" title="Room" aria-label="Room" data-pane="room">
+                <i class="fa-solid fa-door-open"></i>
+                <span class="mfn-badge hidden" id="mfnRoomBadge">0</span>
               </button>
               <button type="button" class="mfn-btn" id="mfnChat" title="Chat" aria-label="Chat" data-pane="chat">
                 <i class="fa-solid fa-comment"></i>
@@ -924,10 +926,7 @@
                 <i class="fa-solid fa-users"></i>
                 <span class="mfn-badge hidden" id="mfnPeopleBadge">0</span>
               </button>
-              <button type="button" class="mfn-btn hidden" id="mfnSecurity" title="Security" aria-label="Security" data-pane="security">
-                <i class="fa-solid fa-shield-halved"></i>
-              </button>
-              </nav>
+            </nav>
           </div>
         </div>
       </section>

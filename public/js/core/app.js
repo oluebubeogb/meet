@@ -5906,15 +5906,22 @@
     var activePane = 'screens';
 
     function isMobileLayout() {
-      return window.matchMedia('(max-width: 900px)').matches;
+      // Portrait narrow screens use mobile chrome; landscape can use desktop view
+      try {
+        return window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
+      } catch (_) {
+        return window.matchMedia('(max-width: 900px)').matches && window.innerHeight >= window.innerWidth;
+      }
     }
+    window.__isMobileLayout = isMobileLayout;
 
     function openDynamicPane(pane, title) {
       activePane = pane || 'screens';
       var panel = document.getElementById('dynamicPanel');
       var titleEl = document.getElementById('dynamicPanelTitle');
       if (titleEl) titleEl.textContent = title || ({
-        screens: 'Screens', chat: 'Chat', people: 'People',
+        screens: 'Screen share', chat: 'Chat', people: 'People',
+        notes: 'Notes', room: 'Room',
         reactions: 'Reactions', security: 'Security', more: 'More',
         activity: 'Meeting activity', connection: 'Connection', hands: 'Hands'
       }[activePane] || 'Panel');
@@ -5924,6 +5931,8 @@
         if (on) {
           p.style.display = '';
           p.style.visibility = '';
+          p.style.height = '';
+          p.style.overflow = '';
         } else {
           p.style.display = 'none';
           p.style.visibility = 'hidden';
@@ -5937,7 +5946,10 @@
           dp.style.display = 'none';
         }
       }
-      if (panel) panel.classList.add('open');
+      if (panel) {
+        panel.classList.add('open');
+        panel.style.display = 'flex';
+      }
       document.querySelectorAll('.mfn-btn[data-pane]').forEach(function (b) {
         b.classList.toggle('active', b.getAttribute('data-pane') === activePane);
       });
@@ -5954,6 +5966,8 @@
         } catch (_) {}
       }
       if (activePane === 'people') fillDynPeople();
+      if (activePane === 'notes') fillDynNotes();
+      if (activePane === 'room') fillDynRoom();
       if (activePane === 'more') fillDynMore();
       if (activePane === 'security') fillDynSecurity();
       if (activePane === 'reactions') renderRecentReactions();
@@ -6009,37 +6023,65 @@
     }
     window.__syncMobileChrome = syncMobileChrome;
 
+    // Re-apply mobile chrome when rotating between portrait and landscape
+    (function wireOrientation() {
+      var last = isMobileLayout();
+      function onOrient() {
+        var now = isMobileLayout();
+        if (now !== last) {
+          last = now;
+          try {
+            if (now) {
+              document.body.classList.add('in-meeting-mobile');
+              syncMobileChrome();
+              openDynamicPane(activePane || 'screens', null);
+            } else {
+              var panel = document.getElementById('dynamicPanel');
+              if (panel) {
+                panel.classList.remove('open');
+                panel.style.display = '';
+              }
+            }
+            if (typeof window.__updateNavBadges === 'function') window.__updateNavBadges();
+          } catch (_) {}
+        } else if (now) {
+          try { syncMobileChrome(); } catch (_) {}
+        }
+      }
+      window.addEventListener('orientationchange', function () { setTimeout(onOrient, 120); });
+      window.addEventListener('resize', function () {
+        clearTimeout(window.__meetOrientTimer);
+        window.__meetOrientTimer = setTimeout(onOrient, 180);
+      });
+    })();
+
     document.getElementById('mfnMic')?.addEventListener('click', function () {
       document.getElementById('micBtn')?.click();
       setTimeout(syncMobileChrome, 80);
     });
+    // Screen share: open screens pane (share + timeline + active shares)
     document.getElementById('mfnScreen')?.addEventListener('click', function () {
-      openDynamicPane('screens', 'Screens');
+      openDynamicPane('screens', 'Screen share');
+      setTimeout(function () {
+        try {
+          var shareBtn = document.getElementById('dynShareBtn');
+          if (shareBtn && typeof isSharing !== 'undefined') {
+            shareBtn.innerHTML = isSharing
+              ? '<i class="fa-solid fa-desktop"></i> Stop sharing'
+              : '<i class="fa-solid fa-desktop"></i> Share screen';
+            shareBtn.classList.toggle('sharing-active', !!isSharing);
+          }
+          var mfn = document.getElementById('mfnScreen');
+          if (mfn) mfn.classList.toggle('sharing-active', !!isSharing);
+        } catch (_) {}
+      }, 30);
     });
-    document.getElementById('mfnHand')?.addEventListener('click', function () {
-      /* handled by pointer long-press/tap below */
+    document.getElementById('mfnNotes')?.addEventListener('click', function () {
+      openDynamicPane('notes', 'Notes');
     });
-    (function wireHand() {
-      var btn = document.getElementById('mfnHand');
-      if (!btn || btn.dataset.handWired) return;
-      btn.dataset.handWired = '1';
-      var longPress = false, timer = null;
-      btn.addEventListener('pointerdown', function () {
-        longPress = false;
-        timer = setTimeout(function () {
-          longPress = true;
-          openRaisedHandsPanel();
-        }, 420);
-      });
-      function end() {
-        if (timer) clearTimeout(timer);
-        timer = null;
-        if (!longPress) document.getElementById('raiseHandBtn')?.click();
-      }
-      btn.addEventListener('pointerup', end);
-      btn.addEventListener('pointerleave', function () { if (timer) clearTimeout(timer); timer = null; });
-      btn.addEventListener('pointercancel', function () { if (timer) clearTimeout(timer); timer = null; });
-    })();
+    document.getElementById('mfnRoom')?.addEventListener('click', function () {
+      openDynamicPane('room', 'Room');
+    });
 
     // Track recently lowered hands (most recent first)
     var loweredHandsLog = [];
@@ -6395,9 +6437,10 @@
         }
       }
       setBadge(document.getElementById('mfnScreenBadge'), screenCount);
-      setBadge(document.getElementById('mfnHandBadge'), handCount);
       setBadge(document.getElementById('mfnChatBadge'), chatUnread);
       setBadge(document.getElementById('mfnPeopleBadge'), peopleCount);
+      // Room badge: raised hands count (attention signal)
+      setBadge(document.getElementById('mfnRoomBadge'), handCount);
       // Desktop toolbar badges if present
       setBadge(document.getElementById('toolbarScreenBadge'), screenCount);
       setBadge(document.getElementById('toolbarHandBadge'), handCount);
@@ -6406,6 +6449,11 @@
       // Sidebar people count already on participantCount
       var pc = document.getElementById('participantCount');
       if (pc) pc.textContent = String(peopleCount);
+      // Keep share icon state in sync
+      try {
+        var mfnScr = document.getElementById('mfnScreen');
+        if (mfnScr) mfnScr.classList.toggle('sharing-active', !!isSharing);
+      } catch (_) {}
     };
     document.getElementById('mfnChat')?.addEventListener('click', function () {
       if (isMobileLayout()) openDynamicPane('chat', 'Chat');
@@ -6414,10 +6462,6 @@
     document.getElementById('mfnPeople')?.addEventListener('click', function () {
       if (isMobileLayout()) openDynamicPane('people', 'People');
       else document.getElementById('toolbarPeopleBtn')?.click();
-    });
-    document.getElementById('mfnSecurity')?.addEventListener('click', function () {
-      if (isMobileLayout()) openDynamicPane('security', 'Security');
-      else document.getElementById('securityBtn')?.click();
     });
     document.getElementById('mobileMeetMoreBtn')?.addEventListener('click', function () {
       openDynamicPane('more', 'More');
@@ -6693,6 +6737,124 @@
         });
       } catch (_) {}
       paint();
+    }
+
+    function fillDynNotes() {
+      var pane = document.getElementById('dynPaneNotes');
+      if (!pane) return;
+      pane.innerHTML = '';
+      pane.classList.remove('hidden');
+      pane.style.display = '';
+      var wrap = document.createElement('div');
+      wrap.className = 'dyn-notes-wrap';
+      wrap.innerHTML =
+        '<p class="hint" style="margin:0 0 0.5rem;font-size:0.85rem">Personal notes for this meeting</p>' +
+        '<textarea id="dynNotesEditor" class="dyn-notes-editor" rows="12" placeholder="Notes…"></textarea>';
+      pane.appendChild(wrap);
+      var src = document.getElementById('liveNotesEditor');
+      var dst = document.getElementById('dynNotesEditor');
+      if (src && dst) {
+        dst.value = src.value || '';
+        dst.addEventListener('input', function () {
+          src.value = dst.value;
+          try { src.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+        });
+        // Keep in sync if desktop notes change
+        if (!src.dataset.dynNotesSync) {
+          src.dataset.dynNotesSync = '1';
+          src.addEventListener('input', function () {
+            var d = document.getElementById('dynNotesEditor');
+            if (d && document.activeElement !== d) d.value = src.value || '';
+          });
+        }
+      }
+    }
+
+    function fillDynRoom() {
+      var pane = document.getElementById('dynPaneRoom');
+      if (!pane) return;
+      pane.innerHTML = '';
+      pane.classList.remove('hidden');
+      pane.style.display = '';
+      var hostLike = false;
+      try {
+        hostLike = (typeof isHostLike === 'function' && isHostLike()) ||
+          myRole === 'host' || myRole === 'cohost' ||
+          (currentMeeting && currentMeeting.isHost);
+      } catch (_) {}
+
+      function addRow(icon, label, onClick, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'more-item media-row-item dyn-room-item' + (opts.hidden ? ' hidden' : '');
+        b.innerHTML = '<i class="fa-solid ' + icon + '"></i> <span>' + label + '</span>';
+        if (opts.badge) {
+          var sp = document.createElement('span');
+          sp.className = 'mfn-badge';
+          sp.style.position = 'static';
+          sp.style.marginLeft = 'auto';
+          sp.textContent = String(opts.badge);
+          b.appendChild(sp);
+        }
+        b.addEventListener('click', onClick);
+        pane.appendChild(b);
+        return b;
+      }
+
+      var handCount = 0;
+      try {
+        handCount = (participants || []).filter(function (p) { return p.handRaised; }).length;
+      } catch (_) {}
+
+      addRow('fa-hand', 'Hands' + (handCount ? '' : ''), function () {
+        openDynamicPane('hands', 'Hands');
+      }, { badge: handCount || null });
+
+      addRow('fa-shield-halved', 'Security', function () {
+        openDynamicPane('security', 'Security');
+      }, { hidden: !hostLike });
+
+      addRow('fa-link', 'Copy link', function () {
+        var code = (currentMeeting && currentMeeting.code) || '';
+        var link = location.origin + '/?join=' + encodeURIComponent(code);
+        try {
+          navigator.clipboard.writeText(link);
+          if (typeof showToast === 'function') showToast('Link copied');
+        } catch (_) {
+          if (typeof showToast === 'function') showToast(link);
+        }
+      });
+
+      addRow('fa-list', 'Meeting activity', function () {
+        openDynamicPane('activity', 'Meeting activity');
+      });
+
+      addRow('fa-signal', 'Connection', function () {
+        openDynamicPane('connection', 'Connection');
+      });
+
+      if (hostLike) {
+        addRow('fa-microphone-slash', 'Mute all', function () {
+          try { if (typeof muteAll === 'function') muteAll(); } catch (_) {}
+        });
+        addRow('fa-bell', 'Ring all', function () {
+          try { if (typeof window.__ringAll === 'function') window.__ringAll(); } catch (_) {}
+        });
+      }
+
+      // Raise own hand
+      addRow('fa-hand', 'Raise / lower hand', function () {
+        document.getElementById('raiseHandBtn')?.click();
+        setTimeout(function () {
+          try { if (typeof window.__updateNavBadges === 'function') window.__updateNavBadges(); } catch (_) {}
+        }, 100);
+      });
+
+      // Reactions shortcut
+      addRow('fa-heart', 'Reactions', function () {
+        openDynamicPane('reactions', 'Reactions');
+      });
     }
 
     function fillDynMore() {
