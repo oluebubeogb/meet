@@ -395,13 +395,18 @@
           <div class="side-tab-panels">
             <!-- PEOPLE TAB -->
             <div class="side-tab-panel active" id="peopleTab" data-tab="people" role="tabpanel">
-              <div class="tab-toolbar">
-                <input type="search" id="peopleSearch" class="people-search" placeholder="Search participants…" autocomplete="off">
-                <button id="deviceToggle" class="btn icon-btn device-toggle" title="Show device icons" aria-pressed="true">
-                  <i class="fa-solid fa-mobile-screen"></i>
-                </button>
-                <button type="button" id="peopleNotifBtn" class="btn icon-btn" title="Notifications"><i class="fa-regular fa-bell"></i></button>
-                <button type="button" id="peopleMuteAllBtn" class="btn small-btn host-cohost-only hidden" title="Mute all">Mute all</button>
+              <div class="tab-toolbar people-toolbar">
+                <div class="people-toolbar-row people-toolbar-search">
+                  <input type="search" id="peopleSearch" class="people-search" placeholder="Search participants…" autocomplete="off">
+                </div>
+                <div class="people-toolbar-row people-toolbar-actions">
+                  <button id="deviceToggle" class="btn icon-btn device-toggle" title="Show device icons" aria-pressed="true">
+                    <i class="fa-solid fa-mobile-screen"></i>
+                  </button>
+                  <button type="button" id="peopleNotifBtn" class="btn icon-btn" title="Notifications"><i class="fa-regular fa-bell"></i></button>
+                  <button type="button" id="peopleMuteAllBtn" class="btn icon-btn host-cohost-only hidden" title="Mute all" aria-label="Mute all"><i class="fa-solid fa-microphone-slash"></i></button>
+                  <button type="button" id="peopleRingAllBtn" class="btn icon-btn host-cohost-only hidden" title="Ring all" aria-label="Ring all"><i class="fa-solid fa-bell"></i></button>
+                </div>
               </div>
               <div id="waitingBanner" class="waiting-banner hidden">
                 <span id="waitingBannerText">0 people want to join</span>

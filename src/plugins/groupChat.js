@@ -110,10 +110,31 @@ module.exports = {
       if (!actor || actor.status !== 'ACTIVE') return;
       const groupId = String(msg.groupId || '');
       const text = String(msg.text || '').trim().slice(0, 2000);
-      if (!groupId || !text) return;
+      if (!groupId) return;
       if (!meeting.chatGroups || !meeting.chatGroups[groupId]) return;
       const g = meeting.chatGroups[groupId];
       if (!g.members.includes(participantId)) return;
+
+      let attachment = null;
+      if (msg.attachment && typeof msg.attachment === 'object') {
+        let kind = 'file';
+        if (msg.attachment.kind === 'image') kind = 'image';
+        else if (msg.attachment.kind === 'voice') kind = 'voice';
+        const name = String(msg.attachment.name || (kind === 'voice' ? 'voice.webm' : 'file')).slice(0, 120);
+        const mime = String(msg.attachment.mime || (kind === 'voice' ? 'audio/webm' : 'application/octet-stream')).slice(0, 120);
+        const dataUrl = String(msg.attachment.dataUrl || '');
+        const maxChars = kind === 'image' ? 900_000 : 7_000_000;
+        if (dataUrl.startsWith('data:') && dataUrl.length <= maxChars) {
+          attachment = {
+            kind,
+            name,
+            mime,
+            size: Number(msg.attachment.size) || dataUrl.length,
+            dataUrl,
+          };
+        }
+      }
+      if (!text && !attachment) return;
 
       const entry = {
         id: 'gc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
@@ -122,6 +143,7 @@ module.exports = {
         fromName: actor.name,
         fromUserId: actor.userId || null,
         text,
+        attachment,
         at: Date.now(),
       };
       if (!Array.isArray(g.messages)) g.messages = [];
@@ -150,8 +172,10 @@ module.exports = {
             senderId: participantId,
             senderName: actor.name,
             senderUserId: actor.userId || null,
-            body: text,
-            attachments: null,
+            body: text || null,
+            attachments: attachment
+              ? { kind: attachment.kind, name: attachment.name, mime: attachment.mime, size: attachment.size, dataUrl: attachment.dataUrl }
+              : null,
             groupId,
           });
         })

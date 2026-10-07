@@ -941,6 +941,7 @@
             window.__meetNotePublicChat(msg.text || '', msg.name || '', msg.participantId);
           }
         } catch (_) {}
+        try { if (typeof window.__notifyNewMessage === 'function') window.__notifyNewMessage(msg.participantId); } catch (_) {}
         return;
       }
       if (msg.type === 'chat-history') {
@@ -966,6 +967,14 @@
       }
       if (msg.type === 'force-mute') {
         forceMuteLocal(msg);
+        return;
+      }
+      if (msg.type === 'ring' || msg.type === 'ring-all' || msg.type === 'ring-participant') {
+        try {
+          if (typeof window.__handleIncomingRing === 'function') {
+            window.__handleIncomingRing(msg);
+          }
+        } catch (_) {}
         return;
       }
       if (msg.type === 'permissions-updated') {
@@ -3390,6 +3399,34 @@
   function sendChatPayload(text, attachment) {
     text = (text || '').trim();
     if (!text && !attachment) return;
+    var channelId = (typeof activeChannelId !== 'undefined' && activeChannelId) ? activeChannelId : 'everyone';
+    var ch = (typeof chatChannels !== 'undefined' && chatChannels) ? chatChannels[channelId] : null;
+
+    if (ch && ch.peerId) {
+      // Private DM
+      var payload = {
+        type: 'private-chat',
+        targetId: ch.peerId,
+        text: text,
+        attachment: attachment || null,
+      };
+      if (ch.peerUserId) payload.targetUserId = ch.peerUserId;
+      if (ch.title) payload.targetName = ch.title;
+      sendWS(payload);
+      return;
+    }
+    if (ch && ch.kind === 'subgroup') {
+      sendWS({
+        type: 'group-chat',
+        groupId: ch.id,
+        text: text,
+        members: ch.members,
+        attachment: attachment || null,
+      });
+      return;
+    }
+
+    // Everyone / public meeting chat
     var mentions = extractMentionsFromText(text);
     sendWS({
       type: 'chat',
@@ -3924,14 +3961,14 @@
       var file = $('chatFileInput').files && $('chatFileInput').files[0];
       $('chatFileInput').value = '';
       if (!file) return;
-      if (file.size > 2 * 1024 * 1024) {
-        alert('Attachments are limited to 2 MB over chat. Use a link for larger files.');
+      if (file.size > 5 * 1024 * 1024) {
+        alert('File is too large to send.');
         return;
       }
       try {
         var dataUrl = await readFileAsDataUrl(file);
-        if (dataUrl.length > 2800000) {
-          alert('File too large to send in chat (max ~2 MB).');
+        if (dataUrl.length > 7000000) {
+          alert('File is too large to send.');
           return;
         }
         var caption = ($('chatInput') && $('chatInput').value || '').trim();
@@ -3974,13 +4011,13 @@
       voiceRecorder.onstop = async function () {
         try {
           var blob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || 'audio/webm' });
-          if (blob.size > 2 * 1024 * 1024) {
-            alert('Voice note too long (max ~2 MB). Keep it shorter.');
+          if (blob.size > 5 * 1024 * 1024) {
+            alert('Voice note is too long.');
             return;
           }
           var dataUrl = await readFileAsDataUrl(blob);
-          if (dataUrl.length > 2800000) {
-            alert('Voice note too large to send.');
+          if (dataUrl.length > 7000000) {
+            alert('Voice note is too large to send.');
             return;
           }
           sendChatPayload('', {
@@ -4328,6 +4365,9 @@
         html += `<button type="button" data-act="mute"><i class="fa-solid fa-microphone-slash"></i> Mute</button>`;
         html += `<button type="button" data-act="ask-unmute"><i class="fa-solid fa-microphone"></i> Ask to unmute</button>`;
       }
+      if (canMute || canModerateNow()) {
+        html += `<button type="button" data-act="ring"><i class="fa-solid fa-bell"></i> Ring</button>`;
+      }
       if (canLower && p.handRaised) {
         html += `<button type="button" data-act="lower-hand"><i class="fa-solid fa-hand"></i> Lower hand</button>`;
       }
@@ -4412,6 +4452,10 @@
       const act = btn.getAttribute('data-act');
       if (act === 'mute') sendWS({ type: 'mute-participant', targetId: p.id });
       if (act === 'ask-unmute') sendWS({ type: 'ask-unmute', targetId: p.id });
+      if (act === 'ring') {
+        if (typeof window.__ringParticipant === 'function') window.__ringParticipant(p.id);
+        else sendWS({ type: 'ring-participant', targetId: p.id });
+      }
       if (act === 'lower-hand') sendWS({ type: 'lower-hand', targetId: p.id });
       if (act === 'stop-share') sendWS({ type: 'force-stop-share', targetId: p.id });
       if (act === 'make-cohost') sendWS({ type: 'set-role', targetId: p.id, role: 'cohost' });
@@ -5484,6 +5528,21 @@
         try {
           if (typeof window.__syncMobileChrome === 'function') window.__syncMobileChrome();
           if (typeof renderCards === 'function') renderCards();
+          // Force-refresh col2 timeline slots so selected images + remove buttons show
+          if (typeof window.__getTimelineState === 'function') {
+            var st = window.__getTimelineState();
+            // re-render via internal slots renderer if available
+          }
+          // Call the shared renderer through the mobile UX module
+          document.querySelectorAll('#stSlotsSide, #stSlots, #stSlotsDesktop, #stSlotsMedia').forEach(function () {});
+          try {
+            // Trigger via public hooks
+            if (window.__hasTimelineImages && window.__hasTimelineImages()) {
+              window.__showSelectedTimelineImage && window.__showSelectedTimelineImage();
+            }
+          } catch (_) {}
+          // Direct slot rebuild: dispatch a custom event the timeline module listens for
+          try { window.dispatchEvent(new CustomEvent('meet-timeline-refresh')); } catch (_) {}
         } catch (_) {}
       }
     }
@@ -5663,13 +5722,13 @@
               dataUrl: compressed.dataUrl,
             }, caption);
           } else {
-            if (file.size > 2 * 1024 * 1024) {
-              alert("Attachments are limited to 2 MB over chat. Use a link for larger files.");
+            if (file.size > 5 * 1024 * 1024) {
+              alert("File is too large to send.");
               return;
             }
             const dataUrl = await readFileAsDataUrl(file);
-            if (dataUrl.length > 2800000) {
-              alert("File too large to send in chat (max ~2 MB).");
+            if (dataUrl.length > 7000000) {
+              alert("File is too large to send.");
               return;
             }
             const caption = ($("chatInput") && $("chatInput").value || "").trim();
@@ -6177,10 +6236,28 @@
         body.appendChild(tmpA);
         fillDynActivity();
       } else if (pane === 'connection') {
-        var tmpC = document.createElement('div');
-        tmpC.id = 'dynPaneConnection';
-        body.appendChild(tmpC);
-        fillDynConnection();
+        // Populate room detail body directly (avoid duplicate id="dynPaneConnection")
+        var diagBody = document.querySelector('#diagDrawer .drawer-body');
+        var html = diagBody ? diagBody.innerHTML : '<div class="diag-status"><span class="diag-dot good"></span><span>Connected</span></div>';
+        var wsState = 'unknown';
+        try {
+          var dot = document.querySelector('.ws-dot');
+          if (dot) {
+            if (dot.classList.contains('connected')) wsState = 'Connected';
+            else if (dot.classList.contains('connecting')) wsState = 'Connecting…';
+            else if (dot.classList.contains('error')) wsState = 'Disconnected';
+          }
+        } catch (_) {}
+        var lkState = (typeof room !== 'undefined' && room && room.state) ? String(room.state) : '—';
+        var extra = '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
+          '<div><strong>Signaling:</strong> ' + escapeHtml(wsState) + '</div>' +
+          '<div><strong>Media (LiveKit):</strong> ' + escapeHtml(lkState) + '</div>' +
+          '<div><strong>Participants:</strong> ' + ((participants || []).length) + '</div>' +
+          '</div>';
+        body.innerHTML = html + extra;
+        try { if (typeof refreshDiag === 'function') refreshDiag(); } catch (_) {}
+        // Also keep dynamic pane in sync if present
+        try { fillDynConnection(); } catch (_) {}
       } else if (pane === 'copylink') {
         var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
         body.innerHTML =
@@ -6476,11 +6553,18 @@
       pane.innerHTML = '';
       // Live people UI for mobile: search + device toggle + list (works, not a dead clone)
       var toolbar = document.createElement('div');
-      toolbar.className = 'tab-toolbar dyn-people-toolbar';
+      toolbar.className = 'tab-toolbar dyn-people-toolbar people-toolbar';
       toolbar.innerHTML =
+        '<div class="people-toolbar-row people-toolbar-search">' +
         '<input type="search" id="dynPeopleSearch" class="people-search" placeholder="Search participants…" autocomplete="off">' +
+        '</div>' +
+        '<div class="people-toolbar-row people-toolbar-actions">' +
         '<button type="button" id="dynDeviceToggle" class="btn icon-btn device-toggle" title="Show device icons" aria-pressed="true">' +
-        '<i class="fa-solid fa-mobile-screen"></i></button>';
+        '<i class="fa-solid fa-mobile-screen"></i></button>' +
+        '<button type="button" id="dynPeopleNotifBtn" class="btn icon-btn" title="Notifications"><i class="fa-regular fa-bell"></i></button>' +
+        '<button type="button" id="dynMuteAllBtn" class="btn icon-btn host-cohost-only" title="Mute all" aria-label="Mute all"><i class="fa-solid fa-microphone-slash"></i></button>' +
+        '<button type="button" id="dynRingAllBtn" class="btn icon-btn host-cohost-only" title="Ring all" aria-label="Ring all"><i class="fa-solid fa-bell"></i></button>' +
+        '</div>';
       pane.appendChild(toolbar);
       var list = document.createElement('ul');
       list.className = 'participant-list';
@@ -6589,6 +6673,25 @@
         } catch (_) {}
         paint();
       });
+      document.getElementById('dynPeopleNotifBtn')?.addEventListener('click', function () {
+        try {
+          document.getElementById('peopleNotifBtn')?.click();
+        } catch (_) {}
+      });
+      document.getElementById('dynMuteAllBtn')?.addEventListener('click', function () {
+        try { if (typeof muteAll === 'function') muteAll(); } catch (_) {}
+      });
+      document.getElementById('dynRingAllBtn')?.addEventListener('click', function () {
+        try { if (typeof window.__ringAll === 'function') window.__ringAll(); } catch (_) {}
+      });
+      // Show/hide host controls
+      try {
+        var canMod = typeof canModerateNow === 'function' ? canModerateNow() : false;
+        ['dynMuteAllBtn', 'dynRingAllBtn'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.classList.toggle('hidden', !canMod);
+        });
+      } catch (_) {}
       paint();
     }
 
@@ -7061,7 +7164,7 @@
     }
 
     function renderTimelineSlots() {
-      ['stSlots', 'stSlotsDesktop', 'stSlotsSide'].forEach(function (id) {
+      ['stSlots', 'stSlotsDesktop', 'stSlotsSide', 'stSlotsMedia'].forEach(function (id) {
         var slots = document.getElementById(id);
         if (!slots) return;
         slots.innerHTML = '';
@@ -7075,23 +7178,33 @@
         screenTimeline.forEach(function (item, idx) {
           var div = document.createElement('div');
           div.className = 'st-slot' + (idx === slideshowIdx ? ' active' : '');
+          div.setAttribute('data-id', item.id || '');
           div.innerHTML = '<img src="' + item.dataUrl + '" alt="Timeline">' +
             (canEditTimeline() ? '<button type="button" class="st-remove" data-id="' + item.id + '" title="Remove">&times;</button>' : '');
           div.addEventListener('click', function (e) {
             if (e.target.classList.contains('st-remove')) return;
             var sync = isHostOrCohost() && !!slideshowOn;
             showTimelineImage(idx, { silent: !sync, sync: sync });
+            // Keep all slot containers in sync after selection
+            renderTimelineSlots();
           });
           slots.appendChild(div);
         });
         slots.querySelectorAll('.st-remove').forEach(function (btn) {
           btn.addEventListener('click', function (e) {
             e.stopPropagation();
+            e.preventDefault();
             removeTimelineImage(btn.getAttribute('data-id'));
           });
         });
       });
     }
+
+    try {
+      window.addEventListener('meet-timeline-refresh', function () {
+        try { renderTimelineSlots(); } catch (_) {}
+      });
+    } catch (_) {}
 
     var _lastShownTimelineId = null;
     var _selectBroadcastTimer = null;
@@ -8255,6 +8368,10 @@
     const extraHandlers = {
       'private-chat': function (msg) {
         if (typeof window.__meetIngestPrivate === 'function') window.__meetIngestPrivate(msg);
+        try {
+          var m = msg.message || msg;
+          if (typeof window.__notifyNewMessage === 'function') window.__notifyNewMessage(m.fromId || m.participantId);
+        } catch (_) {}
       },
       'private-chat-history': function (msg) {
         if (typeof window.__meetIngestPrivateHistory === 'function') {
@@ -8278,6 +8395,10 @@
       },
       'group-chat': function (msg) {
         if (typeof window.__meetIngestGroupChat === 'function') window.__meetIngestGroupChat(msg);
+        try {
+          var gm = msg.message || msg;
+          if (typeof window.__notifyNewMessage === 'function') window.__notifyNewMessage(gm.fromId || gm.participantId);
+        } catch (_) {}
       },
       'group-chat-history': function (msg) {
         if (!msg.groupId || !Array.isArray(msg.messages)) return;
@@ -8438,16 +8559,44 @@
 
       var who = isMe ? 'You' : (m.fromName || m.name || 'User');
       var body = m.text || m.body || '';
+      // Strip embedded attachment marker from DM body (used for DB persistence)
+      if (body && body.indexOf('\n__attach__') >= 0) {
+        body = body.split('\n__attach__')[0];
+      }
       if (typeof linkifyAndMentions === 'function' && m.mentions) {
         body = linkifyAndMentions(body, m.mentions);
       } else {
         body = (typeof escapeHtml === 'function' ? escapeHtml(body) : body);
       }
+      var attachHtml = '';
+      var a = m.attachment;
+      if (a) {
+        if (a.kind === 'image' && a.dataUrl) {
+          attachHtml =
+            '<div class="chat-attach">' +
+            '<img class="chat-attach-img" src="' + a.dataUrl.replace(/"/g, '') + '" alt="' + (typeof escapeHtml === 'function' ? escapeHtml(a.name || 'image') : 'image') + '">' +
+            '</div>';
+        } else if (a.kind === 'voice' && a.dataUrl) {
+          attachHtml =
+            '<div class="chat-attach"><div class="chat-voice-player" data-voice="1">' +
+            '<audio controls preload="metadata" src="' + a.dataUrl.replace(/"/g, '') + '"></audio>' +
+            '</div></div>';
+        } else if (a.dataUrl) {
+          attachHtml =
+            '<div class="chat-attach">' +
+            '<a class="chat-attach-file" href="' + a.dataUrl.replace(/"/g, '') + '" download="' + (typeof escapeHtml === 'function' ? escapeHtml(a.name || 'file') : 'file') + '">' +
+            '<i class="fa-solid fa-paperclip"></i> ' + (typeof escapeHtml === 'function' ? escapeHtml(a.name || 'file') : 'file') +
+            '</a></div>';
+        }
+      }
       var meta = formatChatTime(m.at || m.created_at);
       row.innerHTML =
         '<span class="chat-who">' + (typeof escapeHtml === 'function' ? escapeHtml(who) : who) + '</span>' +
         (body ? '<div class="chat-msg-body">' + body + '</div>' : '') +
+        attachHtml +
         (meta ? '<div class="chat-msg-meta">' + meta + '</div>' : '');
+      var voiceWrap = row.querySelector('.chat-voice-player');
+      if (voiceWrap && typeof bindVoicePlayer === 'function') bindVoicePlayer(voiceWrap);
       return row;
     }
 
@@ -8992,7 +9141,7 @@
       if (!channelHasMsg(chatChannels[key], m)) {
         chatChannels[key].messages.push(m);
       }
-      chatChannels[key].lastText = m.text || '';
+      chatChannels[key].lastText = m.text || (m.attachment ? (m.attachment.kind === 'voice' ? '🎤 Voice note' : m.attachment.kind === 'image' ? '🖼️ Image' : '📎 File') : '');
       chatChannels[key].lastAt = m.at || Date.now();
       if (otherName) chatChannels[key].title = otherName;
       if (otherUserId) {
@@ -9092,7 +9241,7 @@
         }
       }
       if (!channelHasMsg(chatChannels[gid], m)) chatChannels[gid].messages.push(m);
-      chatChannels[gid].lastText = m.text || '';
+      chatChannels[gid].lastText = m.text || (m.attachment ? (m.attachment.kind === 'voice' ? '🎤 Voice note' : m.attachment.kind === 'image' ? '🖼️ Image' : '📎 File') : '');
       chatChannels[gid].lastAt = m.at || Date.now();
       if (activeChannelId !== gid) chatChannels[gid].unread = (chatChannels[gid].unread || 0) + 1;
       else {
@@ -9368,6 +9517,9 @@
     });
     document.getElementById('roomMuteAllBtn')?.addEventListener('click', muteAll);
     document.getElementById('peopleMuteAllBtn')?.addEventListener('click', muteAll);
+    document.getElementById('peopleRingAllBtn')?.addEventListener('click', function () {
+      if (typeof window.__ringAll === 'function') window.__ringAll();
+    });
     document.querySelectorAll('.rail-open-panel').forEach((b) => {
       b.addEventListener('click', () => {
         const g = b.getAttribute('data-goto');
@@ -9380,6 +9532,174 @@
       if (typeof sendWS === 'function') sendWS({ type: 'mute-all' });
       if (typeof showToast === 'function') showToast('Mute all sent');
     }
+
+    function ringAll() {
+      if (!isHostLike()) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'ring-all' });
+      if (typeof showToast === 'function') showToast('Ringing all participants');
+    }
+    window.__ringAll = ringAll;
+
+    function ringParticipant(targetId) {
+      if (!isHostLike() || !targetId) return;
+      if (typeof sendWS === 'function') sendWS({ type: 'ring-participant', targetId: targetId });
+      if (typeof showToast === 'function') showToast('Ringing participant');
+    }
+    window.__ringParticipant = ringParticipant;
+
+    /* ---------- Notification sounds + attention ring (works in background) ---------- */
+    (function meetSoundsAndRing() {
+      var audioCtx = null;
+      var RING_DURATION_MS = 15000;
+      var ringTimer = null;
+      var ringInterval = null;
+
+      function ensureAudio() {
+        try {
+          if (!audioCtx) {
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) audioCtx = new AC();
+          }
+          if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        } catch (_) {}
+        return audioCtx;
+      }
+
+      function unlockOnce() {
+        ensureAudio();
+        try {
+          if (audioCtx) {
+            var o = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            g.gain.value = 0.0001;
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(); o.stop(audioCtx.currentTime + 0.01);
+          }
+        } catch (_) {}
+        document.removeEventListener('pointerdown', unlockOnce, true);
+        document.removeEventListener('keydown', unlockOnce, true);
+      }
+      document.addEventListener('pointerdown', unlockOnce, true);
+      document.addEventListener('keydown', unlockOnce, true);
+
+      function playTone(freqs, duration, volume) {
+        var ctx = ensureAudio();
+        if (!ctx) return;
+        freqs = Array.isArray(freqs) ? freqs : [freqs];
+        volume = volume == null ? 0.18 : volume;
+        var now = ctx.currentTime;
+        freqs.forEach(function (f, i) {
+          try {
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = f;
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(volume, now + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now + i * 0.02);
+            osc.stop(now + duration + 0.05);
+          } catch (_) {}
+        });
+      }
+
+      function playMessageTune() {
+        playTone([880, 1174], 0.22, 0.14);
+        setTimeout(function () { playTone([1318], 0.18, 0.1); }, 160);
+      }
+      window.__playMessageTune = playMessageTune;
+
+      function startRingSound() {
+        stopRingSound();
+        function burst() {
+          playTone([523, 659, 784], 0.35, 0.22);
+          setTimeout(function () { playTone([784, 659], 0.25, 0.16); }, 280);
+        }
+        burst();
+        ringInterval = setInterval(burst, 1800);
+      }
+
+      function stopRingSound() {
+        if (ringInterval) { clearInterval(ringInterval); ringInterval = null; }
+      }
+
+      function ensureRingOverlay() {
+        var el = document.getElementById('ringOverlay');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'ringOverlay';
+        el.className = 'ring-overlay hidden';
+        el.setAttribute('role', 'dialog');
+        el.setAttribute('aria-modal', 'true');
+        el.innerHTML =
+          '<div class="ring-card">' +
+          '<div class="ring-icon"><i class="fa-solid fa-bell"></i></div>' +
+          '<h3 id="ringOverlayTitle">Attention</h3>' +
+          '<p id="ringOverlayText">Someone is trying to get your attention</p>' +
+          '<button type="button" class="btn primary-btn" id="ringOkBtn">OK</button>' +
+          '</div>';
+        document.body.appendChild(el);
+        el.querySelector('#ringOkBtn')?.addEventListener('click', dismissRing);
+        return el;
+      }
+
+      function dismissRing() {
+        stopRingSound();
+        if (ringTimer) { clearTimeout(ringTimer); ringTimer = null; }
+        var el = document.getElementById('ringOverlay');
+        if (el) el.classList.add('hidden');
+      }
+      window.__dismissRing = dismissRing;
+
+      function showRingOverlay(fromName, isAll) {
+        var el = ensureRingOverlay();
+        var title = el.querySelector('#ringOverlayTitle');
+        var text = el.querySelector('#ringOverlayText');
+        if (title) title.textContent = isAll ? 'Ring all' : 'You are being rung';
+        if (text) {
+          text.textContent = fromName
+            ? (fromName + (isAll ? ' is ringing everyone' : ' is ringing you'))
+            : 'Someone is trying to get your attention';
+        }
+        el.classList.remove('hidden');
+        startRingSound();
+        if (ringTimer) clearTimeout(ringTimer);
+        ringTimer = setTimeout(dismissRing, RING_DURATION_MS);
+        try {
+          if (document.hidden && typeof Notification !== 'undefined') {
+            if (Notification.permission === 'granted') {
+              new Notification(isAll ? 'Ring all' : 'You are being rung', {
+                body: fromName ? (fromName + ' wants your attention') : 'Open the meeting',
+                silent: true,
+              });
+            } else if (Notification.permission === 'default') {
+              Notification.requestPermission();
+            }
+          }
+        } catch (_) {}
+      }
+
+      window.__handleIncomingRing = function (msg) {
+        if (!msg) return;
+        var myId = currentMeeting && currentMeeting.participantId;
+        if (msg.fromId && myId && msg.fromId === myId && (msg.type === 'ring-all' || msg.isAll)) return;
+        if (msg.type === 'ring-participant' && msg.targetId && myId && msg.targetId !== myId) return;
+        showRingOverlay(msg.fromName || msg.name || '', msg.type === 'ring-all' || !!msg.isAll);
+      };
+
+      window.__notifyNewMessage = function (fromId) {
+        try {
+          var myId = currentMeeting && currentMeeting.participantId;
+          if (fromId && myId && fromId === myId) return;
+          playMessageTune();
+          if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('New message', { body: 'You have a new chat message', silent: true });
+          }
+        } catch (_) {}
+      };
+    })();
 
     async function refreshMicDevices() {
       const sel = document.getElementById('micDeviceSelect');
@@ -9746,10 +10066,16 @@
         const end = document.getElementById('accEndBtn');
         const muteAll = document.getElementById('roomMuteAllBtn');
         const muteAll2 = document.getElementById('peopleMuteAllBtn');
+        const ringAllBtn = document.getElementById('peopleRingAllBtn');
+        const dynMute = document.getElementById('dynMuteAllBtn');
+        const dynRing = document.getElementById('dynRingAllBtn');
         const show = isHostLike();
         if (end) end.classList.toggle('hidden', !show);
         if (muteAll) muteAll.classList.toggle('hidden', !show);
         if (muteAll2) muteAll2.classList.toggle('hidden', !show);
+        if (ringAllBtn) ringAllBtn.classList.toggle('hidden', !show);
+        if (dynMute) dynMute.classList.toggle('hidden', !show);
+        if (dynRing) dynRing.classList.toggle('hidden', !show);
         const n = Array.isArray(participants) ? participants.length : 0;
         const b = document.getElementById('railPeopleBadge');
         if (b) b.textContent = String(n || '');

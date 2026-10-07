@@ -17,7 +17,28 @@ module.exports = {
       if (!actor || actor.status !== 'ACTIVE') return;
       const targetId = msg.targetId;
       const text = String(msg.text || '').trim().slice(0, 2000);
-      if (!targetId || !text) return;
+      if (!targetId) return;
+
+      let attachment = null;
+      if (msg.attachment && typeof msg.attachment === 'object') {
+        let kind = 'file';
+        if (msg.attachment.kind === 'image') kind = 'image';
+        else if (msg.attachment.kind === 'voice') kind = 'voice';
+        const name = String(msg.attachment.name || (kind === 'voice' ? 'voice.webm' : 'file')).slice(0, 120);
+        const mime = String(msg.attachment.mime || (kind === 'voice' ? 'audio/webm' : 'application/octet-stream')).slice(0, 120);
+        const dataUrl = String(msg.attachment.dataUrl || '');
+        const maxChars = kind === 'image' ? 900_000 : 7_000_000;
+        if (dataUrl.startsWith('data:') && dataUrl.length <= maxChars) {
+          attachment = {
+            kind,
+            name,
+            mime,
+            size: Number(msg.attachment.size) || dataUrl.length,
+            dataUrl,
+          };
+        }
+      }
+      if (!text && !attachment) return;
 
       // Target may have left — still allow send & persist
       let target = meeting.participants.get(targetId);
@@ -35,6 +56,7 @@ module.exports = {
         toName: targetName,
         toUserId: targetUserId,
         text,
+        attachment,
         at: Date.now(),
         peerIsGuest: !targetUserId || !actor.userId,
       };
@@ -50,6 +72,17 @@ module.exports = {
       }
 
       // Permanent storage (independent of meeting presence)
+      // body stores text; attachment JSON is appended in body marker for DMs without schema change
+      const bodyForDb = attachment
+        ? (text || '') + '\n__attach__' + JSON.stringify({
+            kind: attachment.kind,
+            name: attachment.name,
+            mime: attachment.mime,
+            size: attachment.size,
+            dataUrl: attachment.dataUrl,
+          })
+        : text;
+
       Promise.resolve()
         .then(async () => {
           const aUser = actor.userId || null;
@@ -62,7 +95,7 @@ module.exports = {
               senderUserId: aUser,
               senderParticipantId: participantId,
               senderName: actor.name,
-              body: text,
+              body: bodyForDb,
               meetingCode,
             });
           } else if (aUser && !bUser) {
@@ -73,7 +106,7 @@ module.exports = {
               senderUserId: aUser,
               senderParticipantId: participantId,
               senderName: actor.name,
-              body: text,
+              body: bodyForDb,
               meetingCode,
             });
           } else if (!aUser && bUser) {
@@ -84,7 +117,7 @@ module.exports = {
               senderUserId: null,
               senderParticipantId: participantId,
               senderName: actor.name,
-              body: text,
+              body: bodyForDb,
               meetingCode,
             });
           }

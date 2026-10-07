@@ -414,5 +414,42 @@ module.exports = {
       }
     });
 
+    // Attention ring — plays a tone on the recipient's client (works in background)
+    ctx.onWs('ring-all', ({ participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || (actor.role !== 'host' && actor.role !== 'cohost')) return;
+      const { broadcast } = ctx;
+      broadcast(meetingCode, {
+        type: 'ring-all',
+        fromId: participantId,
+        fromName: actor.name,
+        isAll: true,
+        at: Date.now(),
+      });
+      if (ctx.logActivity) {
+        try { ctx.logActivity(meeting, 'ring_all', actor); } catch (_) {}
+      }
+    });
+
+    ctx.onWs('ring-participant', ({ msg, participantId, meeting }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || (actor.role !== 'host' && actor.role !== 'cohost')) return;
+      const targetId = String(msg.targetId || '');
+      if (!targetId) return;
+      const target = meeting.participants.get(targetId);
+      if (!target || target.status !== 'ACTIVE') return;
+      const { sendToParticipant } = ctx;
+      sendToParticipant(targetId, {
+        type: 'ring-participant',
+        targetId,
+        fromId: participantId,
+        fromName: actor.name,
+        at: Date.now(),
+      });
+      if (ctx.logActivity) {
+        try { ctx.logActivity(meeting, 'ring_participant', actor, { targetId, targetName: target.name }); } catch (_) {}
+      }
+    });
+
   },
 };

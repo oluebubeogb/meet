@@ -6,7 +6,7 @@ const db = require('../../db');
 
 const MAX_TEXT = 2000;
 const MAX_IMAGE_DATA_CHARS = 900_000;
-const MAX_FILE_DATA_CHARS = 2_800_000;
+const MAX_FILE_DATA_CHARS = 7_000_000; // ~5 MB binary as data URL
 const MAX_HISTORY = 150;
 
 module.exports = {
@@ -69,17 +69,14 @@ module.exports = {
       }
       broadcast(meetingCode, chatMsg);
 
+      // Persist full attachment so files survive refresh/rejoin
       const attachForDb = attachment
         ? {
             kind: attachment.kind,
             name: attachment.name,
             mime: attachment.mime,
             size: attachment.size,
-            dataUrl:
-              attachment.dataUrl && attachment.dataUrl.length < 200_000
-                ? attachment.dataUrl
-                : null,
-            omitted: !!(attachment.dataUrl && attachment.dataUrl.length >= 200_000),
+            dataUrl: attachment.dataUrl || null,
           }
         : null;
 
@@ -113,20 +110,8 @@ module.exports = {
     ctx.onRegister((ws, meeting) => {
       if (!meeting || !Array.isArray(meeting.chatHistory) || !meeting.chatHistory.length) return;
       try {
-        const messages = meeting.chatHistory.slice(-80).map((m) => {
-          if (!m.attachment || !m.attachment.dataUrl) return m;
-          if (m.attachment.dataUrl.length > 400_000) {
-            return {
-              ...m,
-              attachment: {
-                ...m.attachment,
-                dataUrl: null,
-                omitted: true,
-              },
-            };
-          }
-          return m;
-        });
+        // Keep full attachment dataUrls so voice/image/file feel the same as text after rejoin
+        const messages = meeting.chatHistory.slice(-80);
         ws.send(JSON.stringify({ type: 'chat-history', messages }));
       } catch (_) {}
     });
