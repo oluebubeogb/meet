@@ -6222,10 +6222,15 @@ html.dark #meetingView.meet-rail-layout #col2 {
 #meetingView.meet-rail-layout .meeting-title-bar,
 #meetingView.meet-rail-layout .desktop-screen-timeline,
 #meetingView.meet-rail-layout .call-controls.toolbar-pill,
-#meetingView.meet-rail-layout .mobile-footer-nav,
-#meetingView.meet-rail-layout .mobile-meet-header,
 #meetingView.meet-rail-layout .resizer {
   display: none !important;
+}
+/* Desktop / landscape: hide mobile chrome. Portrait shows them via end-of-file media query. */
+@media (min-width: 901px), (max-width: 900px) and (orientation: landscape) {
+  #meetingView.meet-rail-layout .mobile-footer-nav,
+  #meetingView.meet-rail-layout .mobile-meet-header {
+    display: none !important;
+  }
 }
 
 /* Stage */
@@ -6234,7 +6239,13 @@ html.dark #meetingView.meet-rail-layout #col2 {
   background: var(--bg, #f0f1f5) !important;
   border-radius: 12px;
   position: relative;
-  min-height: 60vh;
+  min-height: 40vh;
+}
+@media (min-width: 901px) {
+  #meetingView.meet-rail-layout #bigView,
+  #meetingView.meet-rail-layout .big-view {
+    min-height: 60vh;
+  }
 }
 html.dark #meetingView.meet-rail-layout #bigView,
 html.dark #meetingView.meet-rail-layout .big-view {
@@ -7204,4 +7215,176 @@ html.dark .side-screen-cards .screen-card {
 #bigView.has-active-share > video.active,
 #bigView.has-active-share > video#lkScreenVideo {
   z-index: 3 !important;
+}
+
+/* =========================================================
+   PORTRAIT MOBILE OVERRIDE (must win over meet-rail-layout)
+   Stage 30vh · dynamic panel · footer nav (mic, share, notes, room, chat, people)
+   ========================================================= */
+@media (max-width: 900px) and (orientation: portrait) {
+  /* Break the desktop grid rail layout into a single column stack */
+  body.in-meeting-mobile #meetingView.meet-rail-layout:not(.hidden),
+  body.in-meeting-mobile #meetingView:not(.hidden),
+  #meetingView.meet-rail-layout:not(.hidden) {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: none !important;
+    grid-template-rows: none !important;
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+    z-index: 900 !important;
+    gap: 0 !important;
+  }
+
+  /* Hide left icon rail — footer nav replaces it */
+  #meetingView.meet-rail-layout .meet-icon-rail,
+  #meetingView .meet-icon-rail,
+  #meetIconRail {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+  }
+
+  /* Hide side drawer / col1 on portrait */
+  #meetingView.meet-rail-layout .meet-side-drawer,
+  #meetingView #meetSideDrawer,
+  #meetingView .col-1,
+  #meetingView #col1,
+  #meetingView .resizer,
+  #meetingView #resizer {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+  }
+
+  /* Hide desktop-only chrome */
+  #meetingView .meeting-title-bar,
+  #meetingView .desktop-screen-timeline,
+  #meetingView .call-controls.toolbar-pill,
+  #meetingView .call-controls.desktop-only,
+  #meetingView .screen-cards.desktop-only {
+    display: none !important;
+  }
+
+  /* Show mobile header + footer (override rail hide) */
+  #meetingView.meet-rail-layout .mobile-meet-header,
+  #meetingView .mobile-meet-header,
+  .mobile-meet-header {
+    display: flex !important;
+  }
+  #meetingView.meet-rail-layout .mobile-footer-nav,
+  #meetingView .mobile-footer-nav,
+  .mobile-footer-nav {
+    display: flex !important;
+    order: 99;
+    width: 100%;
+    flex-shrink: 0;
+    padding-bottom: max(1.25rem, calc(0.5rem + env(safe-area-inset-bottom, 0px))) !important;
+  }
+
+  body.in-meeting-mobile .topbar,
+  body.in-meeting-mobile .footer,
+  body.in-meeting-mobile .app-footer {
+    display: none !important;
+  }
+
+  /* Main content column fills width */
+  #meetingView.meet-rail-layout .col-2,
+  #meetingView.meet-rail-layout #col2,
+  #meetingView .col-2,
+  #meetingView #col2 {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    grid-column: auto !important;
+    grid-row: auto !important;
+    overflow: hidden !important;
+  }
+
+  #meetingView .meeting-content,
+  #meetingView.meet-rail-layout .meeting-content {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  #meetingView .col-2 > .panel,
+  #meetingView.meet-rail-layout .col-2 > .panel,
+  #meetingView #col2 > .panel {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .meet-stage-row {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Stage locked to 30vh */
+  #meetingView.meet-rail-layout #bigView,
+  #meetingView.meet-rail-layout .big-view,
+  #meetingView #bigView,
+  #meetingView .big-view {
+    flex: 0 0 30vh !important;
+    height: 30vh !important;
+    max-height: 30vh !important;
+    min-height: 120px !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    aspect-ratio: auto !important;
+  }
+
+  /* Dynamic panel always visible under stage */
+  #meetingView .dynamic-panel,
+  #meetingView.meet-rail-layout .dynamic-panel,
+  .dynamic-panel,
+  .dynamic-panel.open {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    border-top: 1px solid var(--border, rgba(0,0,0,0.08));
+    overflow: hidden !important;
+  }
+  .dynamic-panel-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-only { display: inline-flex !important; }
+  .desktop-only { display: none !important; }
+}
+
+/* Landscape: keep rail/desktop usable */
+@media (max-width: 900px) and (orientation: landscape) {
+  .mobile-footer-nav,
+  .mobile-meet-header,
+  .dynamic-panel {
+    display: none !important;
+  }
 }
