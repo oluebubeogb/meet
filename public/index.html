@@ -570,14 +570,24 @@
 
             <!-- ROOM TAB -->
             <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
-              <div class="panel-block media-panel-block">
+              <!-- Line 1: room menu -->
+              <div class="panel-block media-panel-block" id="roomMenuLine">
                 <button type="button" class="more-item media-row-item" id="roomSecurityBtn" data-pane="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
-                <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn"><i class="fa-solid fa-link"></i> Copy link</button>
-                <div id="roomLinkBox" class="room-link-box hidden"><input id="roomLinkInput" readonly><button type="button" id="roomLinkCopy" class="btn small-btn">Copy</button></div>
+                <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn" data-pane="copylink"><i class="fa-solid fa-link"></i> Copy link</button>
                 <button type="button" class="more-item media-row-item" id="roomHandBtn" data-pane="hands"><i class="fa-solid fa-hand"></i> Hand</button>
                 <button type="button" class="more-item media-row-item" id="roomActivityBtn" data-pane="activity"><i class="fa-solid fa-list"></i> Meeting activity</button>
                 <button type="button" class="more-item media-row-item" id="roomConnectionBtn" data-pane="connection"><i class="fa-solid fa-signal"></i> Connection</button>
                 <button type="button" class="more-item media-row-item" id="roomMuteAllBtn"><i class="fa-solid fa-microphone-slash"></i> Mute all</button>
+              </div>
+              <!-- Detail view in col2 (same drawer) with back to line 1 -->
+              <div class="room-detail hidden" id="roomDetail">
+                <div class="room-detail-header">
+                  <button type="button" class="btn icon-btn room-detail-back" id="roomDetailBack" title="Back" aria-label="Back to room menu">
+                    <i class="fa-solid fa-arrow-left"></i>
+                  </button>
+                  <h3 class="room-detail-title" id="roomDetailTitle">Details</h3>
+                </div>
+                <div class="room-detail-body" id="roomDetailBody"></div>
               </div>
             </div>
 

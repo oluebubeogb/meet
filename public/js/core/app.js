@@ -4453,7 +4453,8 @@
       closeMore();
     };
     document.getElementById('moreConnectionBtn')?.addEventListener('click', function () {
-      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('connection', 'Connection');
+      else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
       else if (typeof openDiag === 'function') openDiag();
     });
     document.getElementById('liveStatus')?.addEventListener('click', openDiag);
@@ -4617,8 +4618,12 @@
     const closeSec = document.getElementById('securityDrawerClose');
     const backdrop = document.getElementById('securityDrawerBackdrop');
     function openSecurity() {
-      // Prefer col2 dynamic panel
-      if (typeof window.__openDynamicPane === 'function') {
+      // Prefer Room detail in col2 (side drawer)
+      if (typeof window.openRoomDetail === 'function' && document.getElementById('roomDetail')) {
+        window.openRoomDetail('security', 'Security');
+        return;
+      }
+      if (typeof window.__openDynamicPane === 'function' && window.matchMedia('(max-width: 900px)').matches) {
         window.__openDynamicPane('security', 'Security');
         return;
       }
@@ -6002,11 +6007,145 @@
       });
     }
 
+    // --- Room detail in col2 (side drawer), not stage overlay ---
+    function ensureRoomDrawerOpen() {
+      var drawer = document.getElementById('meetSideDrawer');
+      if (drawer) {
+        drawer.classList.remove('hidden');
+        drawer.style.display = 'flex';
+        drawer.style.width = drawer.style.width || '300px';
+        drawer.style.minWidth = '240px';
+        drawer.style.visibility = 'visible';
+        drawer.style.opacity = '1';
+      }
+      try {
+        if (typeof showTab === 'function') showTab('room');
+        else if (typeof togglePanel === 'function') {
+          // force room tab without toggling closed
+          var openPanel = window.__meetOpenPanel;
+        }
+      } catch (_) {}
+      // Show room tab panel explicitly
+      document.querySelectorAll('.side-tab-panel').forEach(function (p) {
+        var match = p.getAttribute('data-tab') === 'room' || p.id === 'roomTab';
+        if (match) {
+          p.classList.remove('hidden');
+          p.classList.add('active');
+          p.style.display = 'flex';
+        } else {
+          p.classList.add('hidden');
+          p.classList.remove('active');
+          p.style.display = 'none';
+        }
+      });
+      // Mark room rail active
+      var rail = document.getElementById('meetIconRail');
+      if (rail) {
+        rail.querySelectorAll('.rail-btn.active').forEach(function (b) { b.classList.remove('active'); });
+        var rb = rail.querySelector('.rail-btn[data-panel="room"]');
+        if (rb) rb.classList.add('active');
+      }
+    }
+
+    function closeRoomDetail() {
+      var roomTab = document.getElementById('roomTab');
+      var detail = document.getElementById('roomDetail');
+      var body = document.getElementById('roomDetailBody');
+      if (roomTab) roomTab.classList.remove('room-showing-detail');
+      if (detail) detail.classList.add('hidden');
+      if (body) body.innerHTML = '';
+      try { document.body.classList.remove('sec-in-panel'); } catch (_) {}
+    }
+
+    function openRoomDetail(pane, title) {
+      ensureRoomDrawerOpen();
+      var roomTab = document.getElementById('roomTab');
+      var detail = document.getElementById('roomDetail');
+      var titleEl = document.getElementById('roomDetailTitle');
+      var body = document.getElementById('roomDetailBody');
+      if (!roomTab || !detail || !body) return;
+      roomTab.classList.add('room-showing-detail');
+      detail.classList.remove('hidden');
+      if (titleEl) titleEl.textContent = title || 'Details';
+      body.innerHTML = '';
+      body.setAttribute('data-pane', pane || '');
+
+      if (pane === 'security') {
+        try {
+          if (typeof applySecurityToForm === 'function') applySecurityToForm(securityState);
+        } catch (_) {}
+        document.body.classList.add('sec-in-panel');
+        var drawerBody = document.querySelector('#securityDrawer .drawer-body');
+        if (!drawerBody) {
+          body.innerHTML = '<p class="st-empty">Security controls unavailable.</p>';
+        } else {
+          var clone = drawerBody.cloneNode(true);
+          clone.querySelectorAll('input[type="checkbox"]').forEach(function (inp) {
+            var orig = document.getElementById(inp.id);
+            if (orig) {
+              inp.checked = !!orig.checked;
+              if (inp.checked) inp.setAttribute('checked', 'checked');
+              else inp.removeAttribute('checked');
+              inp.addEventListener('change', function () {
+                orig.checked = inp.checked;
+                orig.dispatchEvent(new Event('change', { bubbles: true }));
+              });
+            }
+            if (inp.id) inp.id = 'room_' + inp.id;
+          });
+          clone.querySelectorAll('[id]').forEach(function (el) {
+            if (el.tagName === 'INPUT') return;
+            el.removeAttribute('id');
+          });
+          body.appendChild(clone);
+        }
+      } else if (pane === 'hands') {
+        // Render hands into body (reuse fillDynHands logic against a temp target)
+        var tmp = document.createElement('div');
+        tmp.id = 'dynPaneHands';
+        body.appendChild(tmp);
+        fillDynHands();
+        // after fill, content is in dynPaneHands which is already under body
+      } else if (pane === 'activity') {
+        var tmpA = document.createElement('div');
+        tmpA.id = 'dynPaneActivity';
+        body.appendChild(tmpA);
+        fillDynActivity();
+      } else if (pane === 'connection') {
+        var tmpC = document.createElement('div');
+        tmpC.id = 'dynPaneConnection';
+        body.appendChild(tmpC);
+        fillDynConnection();
+      } else if (pane === 'copylink') {
+        var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+        body.innerHTML =
+          '<p class="hint" style="margin:0 0 0.5rem;font-size:0.88rem">Share this link so others can join.</p>' +
+          '<div class="room-link-box">' +
+          '<input id="roomDetailLinkInput" readonly value="' + link.replace(/"/g, '&quot;') + '">' +
+          '<button type="button" id="roomDetailLinkCopy" class="btn small-btn">Copy</button>' +
+          '</div>';
+        try { navigator.clipboard.writeText(link); } catch (_) {}
+        body.querySelector('#roomDetailLinkCopy')?.addEventListener('click', function () {
+          var inp = body.querySelector('#roomDetailLinkInput');
+          try {
+            navigator.clipboard.writeText(inp ? inp.value : link);
+            if (typeof showToast === 'function') showToast('Link copied');
+          } catch (_) {}
+        });
+        if (typeof showToast === 'function') showToast('Link copied');
+      }
+    }
+
+    document.getElementById('roomDetailBack')?.addEventListener('click', function () {
+      closeRoomDetail();
+    });
+
     function openRaisedHandsPanel() {
-      openDynamicPane('hands', 'Hands');
-      fillDynHands();
+      openRoomDetail('hands', 'Hands');
     }
     window.openRaisedHandsPanel = openRaisedHandsPanel;
+    window.openRoomDetail = openRoomDetail;
+    window.closeRoomDetail = closeRoomDetail;
     window.fillDynHands = fillDynHands;
     window.fillDynActivity = fillDynActivity;
     window.fillDynConnection = fillDynConnection;
@@ -8943,23 +9082,10 @@
         if (el) el.onclick = fn;
       }
       if (name === 'security') {
-        // Open security in col2 dynamic panel instead of empty side mount
         try {
-          if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
-          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+          if (typeof openRoomDetail === 'function') openRoomDetail('security', 'Security');
+          else if (typeof window.openRoomDetail === 'function') window.openRoomDetail('security', 'Security');
         } catch (_) {}
-        var mount = document.getElementById('securityPanelMount');
-        if (mount) {
-          // Keep side tab in sync if user navigated via rail
-          try {
-            if (typeof fillDynSecurity === 'function') {
-              // fill into dyn pane first, then clone
-              fillDynSecurity();
-              var src = document.getElementById('dynPaneSecurity');
-              if (src) mount.innerHTML = src.innerHTML;
-            }
-          } catch (_) {}
-        }
       }
       if (name === 'more') {
         var mount2 = document.getElementById('morePanelMount');
@@ -9026,37 +9152,41 @@
         } catch (_) {}
       }
       if (name === 'room') {
+        // Rail click on Room shows line 1 menu (not a nested detail)
+        try { if (typeof closeRoomDetail === 'function') closeRoomDetail(); } catch (_) {}
         try { refreshRoomRaised(); } catch (_) {}
         bindClick('roomCopyLinkBtn', function () {
-          var box = document.getElementById('roomLinkBox');
-          var inp = document.getElementById('roomLinkInput');
-          var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
-          if (inp) inp.value = link;
-          if (box) box.classList.remove('hidden');
-          try { navigator.clipboard.writeText(link); } catch (_) {}
+          if (typeof openRoomDetail === 'function') openRoomDetail('copylink', 'Copy link');
+          else {
+            var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+            try { navigator.clipboard.writeText(link); } catch (_) {}
+          }
         });
         bindClick('roomHandBtn', function () {
-          if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
-          else if (typeof openDynamicPane === 'function') openDynamicPane('hands', 'Hands');
+          if (typeof openRoomDetail === 'function') openRoomDetail('hands', 'Hands');
+          else if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
         });
         bindClick('roomSecurityBtn', function () {
-          if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
-          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+          if (typeof openRoomDetail === 'function') openRoomDetail('security', 'Security');
         });
         bindClick('roomActivityBtn', function () {
-          if (typeof openDynamicPane === 'function') openDynamicPane('activity', 'Meeting activity');
-          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('activity', 'Meeting activity');
+          if (typeof openRoomDetail === 'function') openRoomDetail('activity', 'Meeting activity');
         });
         bindClick('roomConnectionBtn', function () {
-          if (typeof openDynamicPane === 'function') openDynamicPane('connection', 'Connection');
-          else if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
+          if (typeof openRoomDetail === 'function') openRoomDetail('connection', 'Connection');
+        });
+        bindClick('roomCopyLinkBtn', function () {
+          if (typeof openRoomDetail === 'function') openRoomDetail('copylink', 'Copy link');
+        });
+        bindClick('roomDetailBack', function () {
+          if (typeof closeRoomDetail === 'function') closeRoomDetail();
         });
         bindClick('roomMuteAllBtn', function () { muteAll(); });
         document.querySelectorAll('#roomTab .rail-open-panel').forEach(function (b) {
           b.onclick = function () {
             var g = b.getAttribute('data-goto');
             if (g === 'security') {
-              if (typeof openDynamicPane === 'function') openDynamicPane('security', 'Security');
+              if (typeof openRoomDetail === 'function') openRoomDetail('security', 'Security');
               return;
             }
             if (g) { openPanel = null; togglePanel(g); }
@@ -9153,20 +9283,23 @@
       if (inp) { try { navigator.clipboard.writeText(inp.value); if (typeof showToast === 'function') showToast('Copied'); } catch (_) {} }
     });
     document.getElementById('roomHandBtn')?.addEventListener('click', () => {
-      if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
-      else {
-        document.getElementById('handBtn')?.click() || document.getElementById('raiseHandBtn')?.click();
-        refreshRoomRaised();
-      }
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('hands', 'Hands');
+      else if (typeof openRaisedHandsPanel === 'function') openRaisedHandsPanel();
     });
     document.getElementById('roomSecurityBtn')?.addEventListener('click', () => {
-      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('security', 'Security');
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('security', 'Security');
     });
     document.getElementById('roomActivityBtn')?.addEventListener('click', () => {
-      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('activity', 'Meeting activity');
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('activity', 'Meeting activity');
     });
     document.getElementById('roomConnectionBtn')?.addEventListener('click', () => {
-      if (typeof window.__openDynamicPane === 'function') window.__openDynamicPane('connection', 'Connection');
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('connection', 'Connection');
+    });
+    document.getElementById('roomCopyLinkBtn')?.addEventListener('click', () => {
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('copylink', 'Copy link');
+    });
+    document.getElementById('roomDetailBack')?.addEventListener('click', () => {
+      if (typeof window.closeRoomDetail === 'function') window.closeRoomDetail();
     });
     document.getElementById('roomMuteAllBtn')?.addEventListener('click', muteAll);
     document.getElementById('peopleMuteAllBtn')?.addEventListener('click', muteAll);
