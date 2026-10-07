@@ -1514,6 +1514,68 @@
     }
   }
 
+  /** Remove dead/orphan stage media that would paint over the idle background. */
+  function purgeDeadStageMedia(forceAll) {
+    const big = document.getElementById('bigView') || bigView;
+    if (!big) return;
+    big.querySelectorAll('video, canvas').forEach(function (el) {
+      // Keep elements that are part of intentional UI overlays if marked
+      if (el.id === 'contentImage' || el.closest('.content-view') || el.closest('#contentView')) return;
+      if (el.id === 'pdfCanvas' || el.closest('#pdfCanvasWrap')) return;
+      if (el.id === 'localMediaVideo' || el.closest('#contentToolbar')) return;
+      const isLk = el.id === 'lkScreenVideo';
+      const isRemote = el.id === 'remoteVideo' || el === remoteVideo;
+      let dead = !!forceAll;
+      if (!dead) {
+        try {
+          const hasStream = !!(el.srcObject && el.srcObject.getTracks && el.srcObject.getTracks().some(function (t) {
+            return t.readyState === 'live';
+          }));
+          const hasFrames = el.tagName === 'VIDEO' && el.videoWidth > 0 && el.videoHeight > 0;
+          const hidden = getComputedStyle(el).display === 'none';
+          dead = hidden || (!hasStream && !hasFrames);
+          // Stale lkScreenVideo without live tracks
+          if (isLk && !hasStream) dead = true;
+        } catch (_) {
+          dead = true;
+        }
+      }
+      if (dead) {
+        try {
+          if (el.srcObject) {
+            el.srcObject.getTracks().forEach(function (t) { try { t.stop(); } catch (__) {} });
+            el.srcObject = null;
+          }
+        } catch (_) {}
+        if (isRemote) {
+          // Keep #remoteVideo in DOM but fully inert so it cannot cover the bg
+          el.style.display = 'none';
+          el.style.opacity = '0';
+          el.style.pointerEvents = 'none';
+          el.style.zIndex = '0';
+          el.classList.remove('active');
+        } else {
+          try { el.remove(); } catch (_) {}
+        }
+      }
+    });
+  }
+  window.__purgeDeadStageMedia = purgeDeadStageMedia;
+
+  function showIdleStageBackground() {
+    const big = document.getElementById('bigView') || bigView;
+    if (big) big.classList.remove('has-active-share');
+    purgeDeadStageMedia(false);
+    if (bigPlaceholder) {
+      bigPlaceholder.classList.remove('hidden');
+      bigPlaceholder.classList.add('stage-idle-bg');
+      bigPlaceholder.style.display = '';
+      bigPlaceholder.style.visibility = '';
+      bigPlaceholder.style.opacity = '';
+    }
+  }
+  window.__showIdleStageBackground = showIdleStageBackground;
+
   function clearBigView() {
     watchingId = null;
     try { hideContentOverlay(); } catch (_) {}
@@ -1523,17 +1585,20 @@
       // No screen share is active: keep the placeholder artwork visible instead
       // of letting the empty remote video element paint over the stage.
       remoteVideo.style.display = 'none';
-      remoteVideo.style.opacity = '';
+      remoteVideo.style.opacity = '0';
+      remoteVideo.style.pointerEvents = 'none';
+      remoteVideo.style.zIndex = '0';
       remoteVideo.srcObject = null;
       remoteVideo.classList.remove('active');
     }
+    purgeDeadStageMedia(true);
     // Prefer screen-timeline image fallback instead of black / empty stage
     if (typeof window.__showSelectedTimelineImage === 'function' && window.__hasTimelineImages?.()) {
       window.__showSelectedTimelineImage();
       renderCards();
       return;
     }
-    bigPlaceholder?.classList.remove('hidden');
+    showIdleStageBackground();
     if (bigViewLabel) {
       bigViewLabel.textContent = '';
       bigViewLabel.classList.remove('visible');
@@ -9570,16 +9635,40 @@
       // idle background vs share — only hide artwork when a live share video is on stage
       const big = document.getElementById('bigView') || document.querySelector('.big-view');
       if (big) {
-        const liveVid = big.querySelector('video, canvas');
-        const hasLiveMedia = !!(liveVid && liveVid.offsetParent !== null && (liveVid.tagName !== 'VIDEO' || liveVid.srcObject || liveVid.src));
+        // Detect truly live media (has frames or live tracks)
+        let hasLiveMedia = false;
+        big.querySelectorAll('video').forEach(function (v) {
+          try {
+            if (v.id === 'remoteVideo' && getComputedStyle(v).display === 'none') return;
+            const liveTracks = v.srcObject && v.srcObject.getTracks && v.srcObject.getTracks().some(function (t) {
+              return t.readyState === 'live' && t.kind === 'video';
+            });
+            if (liveTracks || (v.videoWidth > 0 && v.videoHeight > 0 && getComputedStyle(v).display !== 'none')) {
+              hasLiveMedia = true;
+            }
+          } catch (_) {}
+        });
         const active = sharers.length > 0 && hasLiveMedia;
         big.classList.toggle('has-active-share', active);
         const ph = document.getElementById('bigPlaceholder');
-        if (ph) {
-          if (active) ph.classList.add('hidden');
-          else {
+        if (active) {
+          if (ph) ph.classList.add('hidden');
+        } else {
+          // No real share: purge orphans that cover the wallpaper, then show it
+          try {
+            if (typeof window.__purgeDeadStageMedia === 'function') window.__purgeDeadStageMedia(false);
+            else if (typeof purgeDeadStageMedia === 'function') purgeDeadStageMedia(false);
+          } catch (_) {}
+          if (ph) {
             ph.classList.remove('hidden');
             ph.classList.add('stage-idle-bg');
+          }
+          // Ensure remoteVideo cannot cover bg
+          const rv = document.getElementById('remoteVideo');
+          if (rv && !rv.srcObject) {
+            rv.style.display = 'none';
+            rv.style.opacity = '0';
+            rv.style.zIndex = '0';
           }
         }
       }
@@ -9587,10 +9676,13 @@
     setInterval(refreshStageCards, 1500);
     // Ensure placeholder background is visible when meeting starts (joiners)
     try {
-      const ph0 = document.getElementById('bigPlaceholder');
-      if (ph0) {
-        ph0.classList.add('stage-idle-bg');
-        ph0.classList.remove('hidden');
+      if (typeof window.__showIdleStageBackground === 'function') window.__showIdleStageBackground();
+      else {
+        const ph0 = document.getElementById('bigPlaceholder');
+        if (ph0) {
+          ph0.classList.add('stage-idle-bg');
+          ph0.classList.remove('hidden');
+        }
       }
     } catch (_) {}
 

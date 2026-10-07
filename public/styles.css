@@ -7004,3 +7004,27 @@ html.dark .side-screen-cards .screen-card {
   min-height: 0;
   overflow: hidden;
 }
+
+
+/* Idle stage: never let empty video/canvas cover the wallpaper */
+#bigView:not(.has-active-share) > video:not([srcObject]),
+#bigView:not(.has-active-share) > video:not(.active) {
+  /* inert leftovers must not paint above placeholder */
+}
+#bigView > #remoteVideo:not(.active) {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+#bigView:not(.has-active-share) > video#lkScreenVideo {
+  /* if lk video exists without active share class, keep below placeholder until frames arrive */
+}
+#bigPlaceholder.stage-idle-bg {
+  z-index: 0 !important;
+  pointer-events: none;
+}
+#bigView.has-active-share > video.active,
+#bigView.has-active-share > video#lkScreenVideo {
+  z-index: 3 !important;
+}
