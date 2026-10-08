@@ -773,7 +773,13 @@
       } catch (_) {}
       if (window.__meetPhase2OnMsg) { try { window.__meetPhase2OnMsg(msg); } catch (_) {} }
       if (msg.type === 'meeting-ended') {
-        // Server closed the room (empty or 12h inactivity)
+        // Server closed the room (host ended for all, empty, or inactivity)
+        // Auto-save/download notes and recordings so participants do not lose them
+        try {
+          if (typeof window.__meetFlushRecordingOnLeave === 'function') {
+            window.__meetFlushRecordingOnLeave();
+          }
+        } catch (_) {}
         stopPolling();
         if (wsRetryTimer) clearTimeout(wsRetryTimer);
         if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} ws = null; }
@@ -1181,6 +1187,10 @@
       })
       .on(LK.RoomEvent.ConnectionStateChanged, (state) => {
         console.log('[LiveKit] connection state:', state);
+        try {
+          if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+          else if (typeof window.refreshDiagnostics === 'function') window.refreshDiagnostics();
+        } catch (_) {}
       })
       .on(LK.RoomEvent.MediaDevicesError, (e) => {
         console.error('[LiveKit] MediaDevicesError', e);
@@ -2777,28 +2787,38 @@
 
   // Screen quality controls (send = encode, view = subscribe / hide video)
   (function initQualityControls() {
-    var sendSel = $('sendQualitySelect');
-    var viewSel = $('viewQualitySelect');
-    if (sendSel) {
-      sendSel.value = sendQuality;
-      sendSel.addEventListener('change', async function () {
-        sendQuality = sendSel.value;
+    function bindSend(sel) {
+      if (!sel) return;
+      sel.value = sendQuality;
+      sel.addEventListener('change', async function () {
+        sendQuality = sel.value;
         if (!SEND_QUALITY[sendQuality]) sendQuality = 'high';
         try { localStorage.setItem('meet-send-quality', sendQuality); } catch (_) {}
+        document.querySelectorAll('.send-quality-select, #sendQualitySelect, #sendQualitySelectMedia').forEach(function (o) {
+          if (o !== sel) o.value = sendQuality;
+        });
         if (isSharing) {
           await republishScreenWithQuality();
         }
       });
     }
-    if (viewSel) {
-      viewSel.value = viewQuality;
-      viewSel.addEventListener('change', function () {
-        viewQuality = viewSel.value;
+    function bindView(sel) {
+      if (!sel) return;
+      sel.value = viewQuality;
+      sel.addEventListener('change', function () {
+        viewQuality = sel.value;
         if (!['high', 'medium', 'off'].includes(viewQuality)) viewQuality = 'high';
         try { localStorage.setItem('meet-view-quality', viewQuality); } catch (_) {}
+        document.querySelectorAll('.view-quality-select, #viewQualitySelect, #viewQualitySelectMedia').forEach(function (o) {
+          if (o !== sel) o.value = viewQuality;
+        });
         applyViewQualityAll();
       });
     }
+    bindSend($('sendQualitySelect'));
+    bindView($('viewQualitySelect'));
+    bindSend($('sendQualitySelectMedia'));
+    bindView($('viewQualitySelectMedia'));
     applyViewQualityAll();
   })();
 
@@ -4999,51 +5019,126 @@
   }
 
   async function refreshDiagnostics() {
-    setTimeout(function(){ if (window.__meetEnhanceDiag) window.__meetEnhanceDiag(); }, 50);
     const label = document.getElementById('diagLabel');
     const dot = document.getElementById('diagDot');
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     let quality = 'Excellent';
     let cls = 'good';
     let latency = '—';
-    let audio = 'Excellent';
-    let video = 'Excellent';
-    let share = 'Excellent';
+    let audio = '—';
+    let video = '—';
+    let share = '—';
+    let network = '—';
+    let signaling = '—';
     try {
-      if (typeof room !== 'undefined' && room && room.engine) {
-        // LiveKit room stats if available
-      }
+      // Network / latency from browser Connection API when available
       if (navigator.connection) {
         const c = navigator.connection;
-        set('diagNetwork', (c.effectiveType || 'Wi-Fi') + (c.downlink ? ' · ' + c.downlink + ' Mbps' : ''));
-        if (c.rtt != null) latency = c.rtt + ' ms';
-        if (c.rtt > 200 || c.effectiveType === '2g') { quality = 'Unstable'; cls = 'bad'; }
-        else if (c.rtt > 100 || c.effectiveType === '3g') { quality = 'Fair'; cls = 'warn'; }
+        network = (c.effectiveType || 'unknown') + (c.downlink != null ? ' · ' + c.downlink + ' Mbps' : '');
+        if (c.rtt != null) {
+          latency = Math.round(c.rtt) + ' ms';
+          if (c.rtt > 250 || c.effectiveType === '2g') { quality = 'Unstable'; cls = 'bad'; }
+          else if (c.rtt > 120 || c.effectiveType === '3g') { quality = 'Fair'; cls = 'warn'; }
+        } else if (c.effectiveType === '2g') { quality = 'Unstable'; cls = 'bad'; }
+        else if (c.effectiveType === '3g') { quality = 'Fair'; cls = 'warn'; }
       } else {
-        set('diagNetwork', 'Wi-Fi / Ethernet');
+        network = 'Wi-Fi / Ethernet';
       }
-      if (ws && ws.readyState === 1) {
-        // soft ping via message timestamp not available; use online
-      } else {
-        quality = 'Disconnected';
-        cls = 'bad';
+
+      // Signaling (app WebSocket)
+      try {
+        if (typeof ws !== 'undefined' && ws) {
+          if (ws.readyState === 1) signaling = 'Connected';
+          else if (ws.readyState === 0) signaling = 'Connecting…';
+          else signaling = 'Disconnected';
+        } else {
+          var wdot = document.querySelector('.ws-dot');
+          if (wdot) {
+            if (wdot.classList.contains('connected')) signaling = 'Connected';
+            else if (wdot.classList.contains('connecting')) signaling = 'Connecting…';
+            else if (wdot.classList.contains('error')) signaling = 'Disconnected';
+          }
+        }
+      } catch (_) {}
+
+      // LiveKit media state
+      try {
+        var lkRoom = (typeof room !== 'undefined') ? room : null;
+        if (lkRoom) {
+          var st = String(lkRoom.state || '');
+          if (st === 'connected') {
+            audio = 'Connected';
+            video = 'Connected';
+            if (quality === 'Excellent' || quality === 'Fair') { /* keep */ }
+          } else if (st === 'connecting' || st === 'reconnecting') {
+            audio = 'Connecting…';
+            video = 'Connecting…';
+            if (cls === 'good') { quality = 'Connecting…'; cls = 'warn'; }
+          } else {
+            audio = st || '—';
+            video = st || '—';
+          }
+          // Screen share track presence
+          try {
+            var local = lkRoom.localParticipant;
+            var hasShare = false;
+            if (local && local.trackPublications) {
+              local.trackPublications.forEach(function (pub) {
+                if (pub && pub.source === 'screen_share' && pub.track) hasShare = true;
+              });
+            }
+            share = hasShare ? 'Sharing' : (st === 'connected' ? 'Ready' : '—');
+          } catch (_) { share = st === 'connected' ? 'Ready' : '—'; }
+
+          // Try RTT from LiveKit engine if available
+          try {
+            if (lkRoom.engine && typeof lkRoom.engine.getStats === 'function') {
+              /* optional future */
+            }
+          } catch (_) {}
+        } else if (signaling === 'Connected') {
+          audio = 'Waiting for media…';
+          video = 'Waiting for media…';
+          share = '—';
+        }
+      } catch (_) {}
+
+      if (signaling === 'Disconnected' || signaling === '—') {
+        if (!(typeof room !== 'undefined' && room && String(room.state) === 'connected')) {
+          quality = 'Disconnected';
+          cls = 'bad';
+        }
       }
     } catch (_) {}
+
     if (label) label.textContent = quality;
     if (dot) { dot.className = 'diag-dot ' + cls; }
     set('diagLatency', latency);
     set('diagAudio', audio);
     set('diagVideo', video);
     set('diagShare', share);
+    set('diagNetwork', network);
+    // Optional signaling element if present
+    set('diagSignaling', signaling);
     const hint = document.getElementById('diagHint');
     if (hint) {
       hint.textContent = cls === 'bad'
         ? 'Your connection may affect audio and screen sharing.'
         : cls === 'warn'
           ? 'Connection is usable but may fluctuate.'
-          : '';
+          : (quality === 'Excellent' ? 'Connection looks good.' : '');
     }
+    try { if (window.__meetEnhanceDiag) window.__meetEnhanceDiag(); } catch (_) {}
   }
+  window.refreshDiagnostics = refreshDiagnostics;
+  window.refreshDiag = refreshDiagnostics;
+  // Keep connection panel live
+  setInterval(function () {
+    try {
+      if (!currentMeeting) return;
+      if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+    } catch (_) {}
+  }, 4000);
 
   async function loadTemplates() {
     try {
@@ -5919,12 +6014,44 @@
       activePane = pane || 'screens';
       var panel = document.getElementById('dynamicPanel');
       var titleEl = document.getElementById('dynamicPanelTitle');
-      if (titleEl) titleEl.textContent = title || ({
-        screens: 'Screen share', chat: 'Chat', people: 'People',
-        notes: 'Notes', room: 'Room',
-        reactions: 'Reactions', security: 'Security', more: 'More',
-        activity: 'Meeting activity', connection: 'Connection', hands: 'Hands'
-      }[activePane] || 'Panel');
+      // On mobile/tablet: hide titles for screens, notes, room, people, more, and room child panes
+      var hideTitlePanes = {
+        screens: 1, notes: 1, room: 1, people: 1, more: 1,
+        hands: 1, security: 1, activity: 1, connection: 1, reactions: 1
+      };
+      var isChild = !!({ hands: 1, security: 1, activity: 1, connection: 1, reactions: 1 }[activePane]);
+      if (titleEl) {
+        if (hideTitlePanes[activePane]) {
+          titleEl.textContent = '';
+          titleEl.classList.add('hidden');
+          titleEl.style.display = 'none';
+        } else {
+          titleEl.textContent = title || ({
+            screens: 'Screen share', chat: 'Chat', people: 'People',
+            notes: 'Notes', room: 'Room',
+            reactions: 'Reactions', security: 'Security', more: 'More',
+            activity: 'Meeting activity', connection: 'Connection', hands: 'Hands'
+          }[activePane] || 'Panel');
+          titleEl.classList.remove('hidden');
+          titleEl.style.display = '';
+        }
+      }
+      // Child panes (from Room): show a back-arrow-only bar
+      try {
+        var existingBack = document.getElementById('dynChildBackBar');
+        if (existingBack) existingBack.remove();
+        if (isChild && panel) {
+          var bodyEl = document.getElementById('dynamicPanelBody') || panel;
+          var bar = document.createElement('div');
+          bar.id = 'dynChildBackBar';
+          bar.className = 'dyn-child-back-bar';
+          bar.innerHTML = '<button type="button" class="btn icon-btn dyn-child-back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button>';
+          bodyEl.insertBefore(bar, bodyEl.firstChild);
+          bar.querySelector('.dyn-child-back')?.addEventListener('click', function () {
+            openDynamicPane('room', '');
+          });
+        }
+      } catch (_) {}
       document.querySelectorAll('.dyn-pane').forEach(function (p) {
         var on = p.getAttribute('data-pane') === activePane;
         p.classList.toggle('hidden', !on);
@@ -6232,7 +6359,11 @@
       if (!roomTab || !detail || !body) return;
       roomTab.classList.add('room-showing-detail');
       detail.classList.remove('hidden');
-      if (titleEl) titleEl.textContent = title || 'Details';
+      if (titleEl) {
+        titleEl.textContent = '';
+        titleEl.classList.add('hidden');
+        titleEl.style.display = 'none';
+      }
       body.innerHTML = '';
       body.setAttribute('data-pane', pane || '');
 
@@ -6278,30 +6409,65 @@
         body.appendChild(tmpA);
         fillDynActivity();
       } else if (pane === 'connection') {
-        // Populate room detail body directly (avoid duplicate id="dynPaneConnection")
-        var diagBody = document.querySelector('#diagDrawer .drawer-body');
-        var html = diagBody ? diagBody.innerHTML : '<div class="diag-status"><span class="diag-dot good"></span><span>Connected</span></div>';
-        var wsState = 'unknown';
         try {
-          var dot = document.querySelector('.ws-dot');
-          if (dot) {
-            if (dot.classList.contains('connected')) wsState = 'Connected';
-            else if (dot.classList.contains('connecting')) wsState = 'Connecting…';
-            else if (dot.classList.contains('error')) wsState = 'Disconnected';
+          if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+          else if (typeof refreshDiag === 'function') refreshDiag();
+        } catch (_) {}
+        var label = (document.getElementById('diagLabel') || {}).textContent || '—';
+        var latency = (document.getElementById('diagLatency') || {}).textContent || '—';
+        var audio = (document.getElementById('diagAudio') || {}).textContent || '—';
+        var video = (document.getElementById('diagVideo') || {}).textContent || '—';
+        var share = (document.getElementById('diagShare') || {}).textContent || '—';
+        var network = (document.getElementById('diagNetwork') || {}).textContent || '—';
+        var dotCls = 'good';
+        try {
+          var d = document.getElementById('diagDot');
+          if (d) {
+            if (d.classList.contains('bad')) dotCls = 'bad';
+            else if (d.classList.contains('warn')) dotCls = 'warn';
+          }
+        } catch (_) {}
+        var wsState = '—';
+        try {
+          if (typeof ws !== 'undefined' && ws) {
+            if (ws.readyState === 1) wsState = 'Connected';
+            else if (ws.readyState === 0) wsState = 'Connecting…';
+            else wsState = 'Disconnected';
+          } else {
+            var wdot = document.querySelector('.ws-dot');
+            if (wdot) {
+              if (wdot.classList.contains('connected')) wsState = 'Connected';
+              else if (wdot.classList.contains('connecting')) wsState = 'Connecting…';
+              else if (wdot.classList.contains('error')) wsState = 'Disconnected';
+            }
           }
         } catch (_) {}
         var lkState = (typeof room !== 'undefined' && room && room.state) ? String(room.state) : '—';
-        var extra = '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
+        var hint = (document.getElementById('diagHint') || {}).textContent || '';
+        body.innerHTML =
+          '<div class="diag-status"><span class="diag-dot ' + dotCls + '"></span><span>' + escapeHtml(label) + '</span></div>' +
+          '<div class="diag-grid">' +
+          '<div><span class="diag-k">Latency</span><span class="diag-v">' + escapeHtml(latency) + '</span></div>' +
+          '<div><span class="diag-k">Audio</span><span class="diag-v">' + escapeHtml(audio) + '</span></div>' +
+          '<div><span class="diag-k">Video</span><span class="diag-v">' + escapeHtml(video) + '</span></div>' +
+          '<div><span class="diag-k">Screen share</span><span class="diag-v">' + escapeHtml(share) + '</span></div>' +
+          '<div><span class="diag-k">Network</span><span class="diag-v">' + escapeHtml(network) + '</span></div>' +
+          '</div>' +
+          '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
           '<div><strong>Signaling:</strong> ' + escapeHtml(wsState) + '</div>' +
           '<div><strong>Media (LiveKit):</strong> ' + escapeHtml(lkState) + '</div>' +
           '<div><strong>Participants:</strong> ' + ((participants || []).length) + '</div>' +
-          '</div>';
-        body.innerHTML = html + extra;
-        try { if (typeof refreshDiag === 'function') refreshDiag(); } catch (_) {}
-        // Also keep dynamic pane in sync if present
+          '</div>' +
+          (hint ? '<p class="diag-hint">' + escapeHtml(hint) + '</p>' : '');
         try { fillDynConnection(); } catch (_) {}
-      } else if (pane === 'copylink') {
-        var link = location.origin + '/?join=' + encodeURIComponent((currentMeeting && currentMeeting.code) || '');
+      } else if (pane === 'copylink' || pane === 'invite') {
+        var code = (currentMeeting && currentMeeting.code) || '';
+        var formatted = code.length === 6 ? code.slice(0, 3) + '-' + code.slice(3) : code;
+        var token = '';
+        try { token = window.__lastInviteToken || sessionStorage.getItem('meet-invite-' + code) || ''; } catch (_) {}
+        var link = token
+          ? (location.origin + '/' + formatted + '?key=' + token)
+          : (location.origin + '/?join=' + encodeURIComponent(code));
         body.innerHTML =
           '<p class="hint" style="margin:0 0 0.5rem;font-size:0.88rem">Share this link so others can join.</p>' +
           '<div class="room-link-box">' +
@@ -6368,33 +6534,57 @@
     function fillDynConnection() {
       var pane = document.getElementById('dynPaneConnection');
       if (!pane) return;
-      // Pull live diag content if present
-      var diagBody = document.querySelector('#diagDrawer .drawer-body');
-      var html = '';
-      if (diagBody) {
-        html = diagBody.innerHTML;
-      } else {
-        html = '<div class="diag-status"><span class="diag-dot good"></span><span>Connected</span></div>';
-      }
-      // Add live connection info
-      var wsState = 'unknown';
+      // Always refresh metrics first so values are not stuck on Checking…
       try {
-        var dot = document.querySelector('.ws-dot');
-        if (dot) {
-          if (dot.classList.contains('connected')) wsState = 'Connected';
-          else if (dot.classList.contains('connecting')) wsState = 'Connecting…';
-          else if (dot.classList.contains('error')) wsState = 'Disconnected';
+        if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+        else if (typeof refreshDiag === 'function') refreshDiag();
+      } catch (_) {}
+      var label = (document.getElementById('diagLabel') || {}).textContent || '—';
+      var latency = (document.getElementById('diagLatency') || {}).textContent || '—';
+      var audio = (document.getElementById('diagAudio') || {}).textContent || '—';
+      var video = (document.getElementById('diagVideo') || {}).textContent || '—';
+      var share = (document.getElementById('diagShare') || {}).textContent || '—';
+      var network = (document.getElementById('diagNetwork') || {}).textContent || '—';
+      var dotCls = 'good';
+      try {
+        var d = document.getElementById('diagDot');
+        if (d) {
+          if (d.classList.contains('bad')) dotCls = 'bad';
+          else if (d.classList.contains('warn')) dotCls = 'warn';
+        }
+      } catch (_) {}
+      var wsState = '—';
+      try {
+        if (typeof ws !== 'undefined' && ws) {
+          if (ws.readyState === 1) wsState = 'Connected';
+          else if (ws.readyState === 0) wsState = 'Connecting…';
+          else wsState = 'Disconnected';
+        } else {
+          var wdot = document.querySelector('.ws-dot');
+          if (wdot) {
+            if (wdot.classList.contains('connected')) wsState = 'Connected';
+            else if (wdot.classList.contains('connecting')) wsState = 'Connecting…';
+            else if (wdot.classList.contains('error')) wsState = 'Disconnected';
+          }
         }
       } catch (_) {}
       var lkState = (typeof room !== 'undefined' && room && room.state) ? String(room.state) : '—';
-      var extra = '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
+      var hint = (document.getElementById('diagHint') || {}).textContent || '';
+      pane.innerHTML =
+        '<div class="diag-status"><span class="diag-dot ' + dotCls + '"></span><span>' + escapeHtml(label) + '</span></div>' +
+        '<div class="diag-grid">' +
+        '<div><span class="diag-k">Latency</span><span class="diag-v">' + escapeHtml(latency) + '</span></div>' +
+        '<div><span class="diag-k">Audio</span><span class="diag-v">' + escapeHtml(audio) + '</span></div>' +
+        '<div><span class="diag-k">Video</span><span class="diag-v">' + escapeHtml(video) + '</span></div>' +
+        '<div><span class="diag-k">Screen share</span><span class="diag-v">' + escapeHtml(share) + '</span></div>' +
+        '<div><span class="diag-k">Network</span><span class="diag-v">' + escapeHtml(network) + '</span></div>' +
+        '</div>' +
+        '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
         '<div><strong>Signaling:</strong> ' + escapeHtml(wsState) + '</div>' +
         '<div><strong>Media (LiveKit):</strong> ' + escapeHtml(lkState) + '</div>' +
         '<div><strong>Participants:</strong> ' + ((participants || []).length) + '</div>' +
-        '</div>';
-      pane.innerHTML = html + extra;
-      try { if (typeof openDiag === 'function') { /* refresh metrics without opening drawer */ } } catch (_) {}
-      try { if (typeof refreshDiag === 'function') refreshDiag(); } catch (_) {}
+        '</div>' +
+        (hint ? '<p class="diag-hint">' + escapeHtml(hint) + '</p>' : '');
     }
 
     window.__updateNavBadges = function updateNavBadges() {
@@ -6748,8 +6938,10 @@
       var wrap = document.createElement('div');
       wrap.className = 'dyn-notes-wrap';
       wrap.innerHTML =
-        '<p class="hint" style="margin:0 0 0.5rem;font-size:0.85rem">Personal notes for this meeting</p>' +
-        '<textarea id="dynNotesEditor" class="dyn-notes-editor" rows="12" placeholder="Notes…"></textarea>';
+        '<div class="dyn-notes-editor-wrap">' +
+        '<textarea id="dynNotesEditor" class="dyn-notes-editor" rows="12" placeholder="Notes…"></textarea>' +
+        '<button type="button" class="btn icon-btn notes-export-btn" id="dynNotesExportBtn" title="Export notes" aria-label="Export notes"><i class="fa-solid fa-file-export"></i></button>' +
+        '</div>';
       pane.appendChild(wrap);
       var src = document.getElementById('liveNotesEditor');
       var dst = document.getElementById('dynNotesEditor');
@@ -6767,6 +6959,26 @@
             if (d && document.activeElement !== d) d.value = src.value || '';
           });
         }
+      }
+      var expBtn = document.getElementById('dynNotesExportBtn');
+      if (expBtn && !expBtn.dataset.bound) {
+        expBtn.dataset.bound = '1';
+        expBtn.addEventListener('click', function () {
+          try {
+            if (typeof window.__meetExportNotesNow === 'function') window.__meetExportNotesNow();
+            else {
+              var ed = document.getElementById('dynNotesEditor') || document.getElementById('liveNotesEditor');
+              var notes = (ed && ed.value) || '';
+              if (!notes.trim()) { if (typeof showToast === 'function') showToast('No notes to export'); return; }
+              var blob = new Blob([notes], { type: 'text/plain;charset=utf-8' });
+              var a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = 'meet-notes-' + ((currentMeeting && currentMeeting.code) || 'session') + '.txt';
+              document.body.appendChild(a); a.click(); a.remove();
+              if (typeof showToast === 'function') showToast('Notes exported');
+            }
+          } catch (_) {}
+        });
       }
     }
 
@@ -6823,6 +7035,55 @@
           if (typeof showToast === 'function') showToast('Link copied');
         } catch (_) {
           if (typeof showToast === 'function') showToast(link);
+        }
+      });
+
+      addRow('fa-user-plus', 'Invite', function () {
+        // Show shareable invite same feel as mobile
+        if (typeof openDynamicPane === 'function') {
+          openDynamicPane('invite', '');
+          var invPane = document.getElementById('dynPaneMore') || document.getElementById('dynPaneRoom');
+          // Prefer dedicated invite content in connection-style detail
+          try {
+            var panel = document.getElementById('dynamicPanelBody');
+            if (panel) {
+              var code = (currentMeeting && currentMeeting.code) || '';
+              var link = location.origin + '/?join=' + encodeURIComponent(code);
+              var inv = document.createElement('div');
+              inv.className = 'dyn-pane';
+              inv.setAttribute('data-pane', 'invite');
+              inv.id = 'dynPaneInvite';
+              inv.innerHTML =
+                '<div class="dyn-child-back-bar"><button type="button" class="btn icon-btn dyn-child-back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button></div>' +
+                '<p class="hint" style="margin:0 0 0.5rem;font-size:0.88rem">Share this link so others can join.</p>' +
+                '<div class="room-link-box">' +
+                '<input id="dynInviteLinkInput" readonly value="' + link.replace(/"/g, '&quot;') + '">' +
+                '<button type="button" id="dynInviteLinkCopy" class="btn small-btn">Copy</button>' +
+                '</div>';
+              // hide other panes, show invite
+              document.querySelectorAll('.dyn-pane').forEach(function (p) {
+                p.classList.add('hidden'); p.style.display = 'none';
+              });
+              var existing = document.getElementById('dynPaneInvite');
+              if (existing) existing.remove();
+              panel.appendChild(inv);
+              inv.querySelector('.dyn-child-back')?.addEventListener('click', function () {
+                inv.remove();
+                openDynamicPane('room', '');
+              });
+              inv.querySelector('#dynInviteLinkCopy')?.addEventListener('click', function () {
+                try {
+                  navigator.clipboard.writeText(link);
+                  if (typeof showToast === 'function') showToast('Link copied');
+                } catch (_) {}
+              });
+              try { navigator.clipboard.writeText(link); } catch (_) {}
+            }
+          } catch (_) {
+            if (typeof openInviteDrawer === 'function') openInviteDrawer();
+          }
+        } else if (typeof openInviteDrawer === 'function') {
+          openInviteDrawer();
         }
       });
 
@@ -6901,14 +7162,12 @@
         bar.className = 'dyn-back-bar';
         var back = document.createElement('button');
         back.type = 'button';
-        back.className = 'btn small-btn dyn-back-btn';
-        back.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back';
+        back.className = 'btn icon-btn dyn-back-btn';
+        back.setAttribute('aria-label', 'Back');
+        back.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
         back.addEventListener('click', fillDynMore);
-        var h = document.createElement('h4');
-        h.className = 'dyn-sub-title';
-        h.textContent = titleText;
         bar.appendChild(back);
-        bar.appendChild(h);
+        // No title text — back arrow only
         return bar;
       }
 
@@ -6971,50 +7230,55 @@
       });
       addSep();
 
-      // Connection — open in dynamic panel
+      // Connection — open in dynamic panel with live metrics
       addItem('Connection', 'fa-signal', function () {
         pane.innerHTML = '';
         pane.appendChild(panelBackBar('Connection'));
-        var live = document.getElementById('liveStatusText');
-        var status = document.createElement('p');
-        status.className = 'dyn-conn-status';
-        status.textContent = (live && live.textContent) || 'Checking…';
-        pane.appendChild(status);
-        var diagBody = document.querySelector('#diagDrawer .drawer-body');
-        if (diagBody) {
-          var clone = diagBody.cloneNode(true);
-          clone.querySelectorAll('[id]').forEach(function (el) { el.removeAttribute('id'); });
-          pane.appendChild(clone);
-        } else {
-          var hint = document.createElement('p');
-          hint.className = 'st-empty';
-          hint.textContent = 'Connection details will appear here while you are in a call.';
-          pane.appendChild(hint);
-        }
-        // Refresh diagnostics if available (without leaving panel)
         try {
-          if (typeof openDrawer === 'function') {
-            // touch openDiag internals by clicking then immediately hiding drawer
-            var drawer = document.getElementById('diagDrawer');
-            document.getElementById('moreConnectionBtn')?.click();
-            if (drawer) {
-              drawer.classList.add('hidden');
-              drawer.setAttribute('aria-hidden', 'true');
-            }
-          }
+          if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+          else if (typeof window.refreshDiagnostics === 'function') window.refreshDiagnostics();
         } catch (_) {}
-        // Re-read status after a tick
-        setTimeout(function () {
-          var live2 = document.getElementById('liveStatusText');
-          if (live2 && status) status.textContent = live2.textContent || status.textContent;
-          var diagBody2 = document.querySelector('#diagDrawer .drawer-body');
-          if (diagBody2 && !pane.querySelector('.drawer-body, .diag-body, .dyn-diag-clone')) {
-            var c2 = diagBody2.cloneNode(true);
-            c2.classList.add('dyn-diag-clone');
-            c2.querySelectorAll('[id]').forEach(function (el) { el.removeAttribute('id'); });
-            pane.appendChild(c2);
-          }
-        }, 200);
+        var holder = document.createElement('div');
+        holder.id = 'dynMoreConnHolder';
+        pane.appendChild(holder);
+        function paintConn() {
+          try {
+            if (typeof refreshDiagnostics === 'function') refreshDiagnostics();
+          } catch (_) {}
+          var label = (document.getElementById('diagLabel') || {}).textContent || '—';
+          var latency = (document.getElementById('diagLatency') || {}).textContent || '—';
+          var audio = (document.getElementById('diagAudio') || {}).textContent || '—';
+          var video = (document.getElementById('diagVideo') || {}).textContent || '—';
+          var share = (document.getElementById('diagShare') || {}).textContent || '—';
+          var network = (document.getElementById('diagNetwork') || {}).textContent || '—';
+          var signaling = (document.getElementById('diagSignaling') || {}).textContent || '—';
+          var dotCls = 'good';
+          try {
+            var d = document.getElementById('diagDot');
+            if (d) {
+              if (d.classList.contains('bad')) dotCls = 'bad';
+              else if (d.classList.contains('warn')) dotCls = 'warn';
+            }
+          } catch (_) {}
+          var lkState = (typeof room !== 'undefined' && room && room.state) ? String(room.state) : '—';
+          holder.innerHTML =
+            '<div class="diag-status"><span class="diag-dot ' + dotCls + '"></span><span>' + (label || '—') + '</span></div>' +
+            '<div class="diag-grid">' +
+            '<div><span class="diag-k">Latency</span><span class="diag-v">' + latency + '</span></div>' +
+            '<div><span class="diag-k">Audio</span><span class="diag-v">' + audio + '</span></div>' +
+            '<div><span class="diag-k">Video</span><span class="diag-v">' + video + '</span></div>' +
+            '<div><span class="diag-k">Screen share</span><span class="diag-v">' + share + '</span></div>' +
+            '<div><span class="diag-k">Network</span><span class="diag-v">' + network + '</span></div>' +
+            '<div><span class="diag-k">Signaling</span><span class="diag-v">' + signaling + '</span></div>' +
+            '</div>' +
+            '<div class="diag-live" style="margin-top:0.75rem;font-size:0.88rem">' +
+            '<div><strong>Media (LiveKit):</strong> ' + lkState + '</div>' +
+            '<div><strong>Participants:</strong> ' + ((participants || []).length) + '</div>' +
+            '</div>';
+        }
+        paintConn();
+        setTimeout(paintConn, 150);
+        setTimeout(paintConn, 600);
       });
 
       // Activity — open in dynamic panel
@@ -8304,12 +8568,29 @@
       if (typeof showToast === 'function') showToast(blurOn ? 'Blur on' : 'Blur off');
     };
 
-    // --- Whiteboard ---
+    // --- Whiteboard (multi-board, pen sizes, text, undo/redo, share) ---
     let wbDrawing = false;
     let wbErase = false;
+    let wbTool = 'pencil'; // pencil | brush | eraser | text
     let wbPoints = [];
+    let wbBoards = [{ strokes: [], texts: [], snapshot: null }];
+    let wbBoardIdx = 0;
+    let wbUndoStack = [];
+    let wbRedoStack = [];
+    let wbSharing = false;
+    let wbShareStream = null;
     const canvas = document.getElementById('whiteboardCanvas');
     const ctx2d = canvas ? canvas.getContext('2d') : null;
+    const wbTextLayer = document.getElementById('wbTextLayer');
+
+    function wbCurrent() { return wbBoards[wbBoardIdx] || wbBoards[0]; }
+    function wbSizeVal() {
+      var el = document.getElementById('wbSize');
+      var n = el ? parseInt(el.value, 10) : 3;
+      if (isNaN(n) || n < 1) n = 1;
+      if (n > 48) n = 48;
+      return n;
+    }
     function wbPos(e) {
       const r = canvas.getBoundingClientRect();
       const cx = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX);
@@ -8321,9 +8602,12 @@
     }
     function drawStroke(stroke) {
       if (!ctx2d || !stroke.points || !stroke.points.length) return;
+      var w = stroke.width || 3;
+      if (stroke.tool === 'brush') w = Math.max(w, w * 1.6);
       ctx2d.strokeStyle = stroke.erase ? '#ffffff' : (stroke.color || '#111');
-      ctx2d.lineWidth = stroke.erase ? 20 : (stroke.width || 3);
+      ctx2d.lineWidth = stroke.erase ? Math.max(12, w * 4) : w;
       ctx2d.lineCap = 'round';
+      ctx2d.lineJoin = 'round';
       ctx2d.beginPath();
       stroke.points.forEach((pt, i) => {
         if (i === 0) ctx2d.moveTo(pt.x, pt.y);
@@ -8331,45 +8615,303 @@
       });
       ctx2d.stroke();
     }
+    function wbPushUndo() {
+      try {
+        wbUndoStack.push(canvas.toDataURL('image/png'));
+        if (wbUndoStack.length > 40) wbUndoStack.shift();
+        wbRedoStack = [];
+      } catch (_) {}
+    }
+    function wbRedrawFromBoard() {
+      if (!ctx2d || !canvas) return;
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      var b = wbCurrent();
+      if (b.snapshot) {
+        var img = new Image();
+        img.onload = function () { ctx2d.drawImage(img, 0, 0); };
+        img.src = b.snapshot;
+      } else {
+        (b.strokes || []).forEach(drawStroke);
+      }
+      // texts
+      if (wbTextLayer) {
+        wbTextLayer.innerHTML = '';
+        (b.texts || []).forEach(function (t) {
+          var el = document.createElement('div');
+          el.className = 'wb-textbox';
+          el.contentEditable = 'true';
+          el.style.left = t.x + 'px';
+          el.style.top = t.y + 'px';
+          el.style.width = (t.w || 160) + 'px';
+          el.style.minHeight = (t.h || 40) + 'px';
+          el.textContent = t.text || '';
+          el.dataset.id = t.id;
+          makeWbTextBox(el, t);
+          wbTextLayer.appendChild(el);
+        });
+      }
+    }
+    function wbUpdateLabel() {
+      var el = document.getElementById('wbBoardLabel');
+      if (el) el.textContent = (wbBoardIdx + 1) + ' / ' + wbBoards.length;
+    }
+    function wbSaveBoardSnapshot() {
+      try {
+        var b = wbCurrent();
+        b.snapshot = canvas.toDataURL('image/png');
+        // collect texts
+        if (wbTextLayer) {
+          b.texts = Array.from(wbTextLayer.querySelectorAll('.wb-textbox')).map(function (el) {
+            return {
+              id: el.dataset.id || String(Date.now()),
+              x: parseFloat(el.style.left) || 0,
+              y: parseFloat(el.style.top) || 0,
+              w: el.offsetWidth,
+              h: el.offsetHeight,
+              text: el.textContent || ''
+            };
+          });
+        }
+      } catch (_) {}
+    }
+    function makeWbTextBox(el, data) {
+      el.style.position = 'absolute';
+      el.style.resize = 'both';
+      el.style.overflow = 'auto';
+      el.style.border = '1px dashed rgba(0,0,0,0.25)';
+      el.style.padding = '4px 6px';
+      el.style.background = 'rgba(255,255,255,0.85)';
+      el.style.font = '14px sans-serif';
+      el.style.color = '#111';
+      el.style.zIndex = '2';
+      el.style.minWidth = '80px';
+      el.style.minHeight = '28px';
+      var dragging = false, ox = 0, oy = 0;
+      el.addEventListener('mousedown', function (e) {
+        if (e.target !== el) return;
+        dragging = true; ox = e.clientX - el.offsetLeft; oy = e.clientY - el.offsetTop;
+        e.stopPropagation();
+      });
+      window.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        el.style.left = (e.clientX - ox) + 'px';
+        el.style.top = (e.clientY - oy) + 'px';
+      });
+      window.addEventListener('mouseup', function () { dragging = false; });
+    }
     if (canvas && ctx2d) {
-      canvas.addEventListener('mousedown', (e) => { wbDrawing = true; wbPoints = [wbPos(e)]; });
+      canvas.addEventListener('mousedown', (e) => {
+        if (wbTool === 'text') {
+          var p = wbPos(e);
+          var id = 't' + Date.now();
+          var el = document.createElement('div');
+          el.className = 'wb-textbox';
+          el.contentEditable = 'true';
+          el.dataset.id = id;
+          el.style.left = p.x + 'px';
+          el.style.top = p.y + 'px';
+          el.style.width = '160px';
+          el.style.minHeight = '40px';
+          makeWbTextBox(el, {});
+          if (wbTextLayer) wbTextLayer.appendChild(el);
+          el.focus();
+          wbCurrent().texts = wbCurrent().texts || [];
+          wbCurrent().texts.push({ id: id, x: p.x, y: p.y, w: 160, h: 40, text: '' });
+          return;
+        }
+        wbPushUndo();
+        wbDrawing = true;
+        wbPoints = [wbPos(e)];
+      });
       canvas.addEventListener('mousemove', (e) => {
         if (!wbDrawing) return;
         wbPoints.push(wbPos(e));
         drawStroke({
           points: wbPoints.slice(-2),
           color: document.getElementById('wbColor')?.value,
-          erase: wbErase,
+          erase: wbErase || wbTool === 'eraser',
+          width: wbSizeVal(),
+          tool: wbTool,
         });
       });
       const endDraw = () => {
         if (!wbDrawing) return;
         wbDrawing = false;
         if (wbPoints.length > 1) {
+          var stroke = {
+            points: wbPoints.slice(),
+            color: document.getElementById('wbColor')?.value || '#111',
+            erase: wbErase || wbTool === 'eraser',
+            width: wbSizeVal(),
+            tool: wbTool,
+          };
+          wbCurrent().strokes = wbCurrent().strokes || [];
+          wbCurrent().strokes.push(stroke);
           safeSend({
             type: 'wb-stroke',
-            points: wbPoints,
-            color: document.getElementById('wbColor')?.value || '#111',
-            erase: wbErase,
+            points: stroke.points,
+            color: stroke.color,
+            erase: stroke.erase,
+            width: stroke.width,
+            board: wbBoardIdx,
           });
         }
         wbPoints = [];
+        wbSaveBoardSnapshot();
       };
       canvas.addEventListener('mouseup', endDraw);
       canvas.addEventListener('mouseleave', endDraw);
+      // touch
+      canvas.addEventListener('touchstart', function (e) {
+        if (e.touches[0]) {
+          e.preventDefault();
+          canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }));
+        }
+      }, { passive: false });
+      canvas.addEventListener('touchmove', function (e) {
+        if (e.touches[0]) {
+          e.preventDefault();
+          canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }));
+        }
+      }, { passive: false });
+      canvas.addEventListener('touchend', function () { endDraw(); });
     }
-    document.getElementById('wbEraser')?.addEventListener('click', () => { wbErase = true; });
-    document.getElementById('wbPen')?.addEventListener('click', () => { wbErase = false; });
+    function setWbTool(tool) {
+      wbTool = tool;
+      wbErase = tool === 'eraser';
+      document.querySelectorAll('.wb-tool').forEach(function (b) { b.classList.remove('active'); });
+      if (tool === 'pencil' || tool === 'brush') document.getElementById('wbPen')?.classList.add('active');
+      if (tool === 'eraser') document.getElementById('wbEraser')?.classList.add('active');
+      if (tool === 'text') document.getElementById('wbText')?.classList.add('active');
+    }
+    document.getElementById('wbPen')?.addEventListener('click', function () {
+      var menu = document.getElementById('wbPenMenu');
+      if (menu) menu.classList.toggle('hidden');
+      setWbTool(wbTool === 'brush' ? 'brush' : 'pencil');
+    });
+    document.querySelectorAll('.wb-pen-opt').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setWbTool(btn.getAttribute('data-tool') || 'pencil');
+        document.getElementById('wbPenMenu')?.classList.add('hidden');
+      });
+    });
+    document.getElementById('wbEraser')?.addEventListener('click', function () { setWbTool('eraser'); document.getElementById('wbPenMenu')?.classList.add('hidden'); });
+    document.getElementById('wbText')?.addEventListener('click', function () { setWbTool('text'); document.getElementById('wbPenMenu')?.classList.add('hidden'); });
+    document.getElementById('wbSize')?.addEventListener('input', function () {
+      this.value = this.value.replace(/[^0-9]/g, '');
+    });
+    document.getElementById('wbUndo')?.addEventListener('click', function () {
+      if (!wbUndoStack.length || !ctx2d) return;
+      try {
+        wbRedoStack.push(canvas.toDataURL('image/png'));
+        var prev = wbUndoStack.pop();
+        var img = new Image();
+        img.onload = function () { ctx2d.clearRect(0, 0, canvas.width, canvas.height); ctx2d.drawImage(img, 0, 0); };
+        img.src = prev;
+      } catch (_) {}
+    });
+    document.getElementById('wbRedo')?.addEventListener('click', function () {
+      if (!wbRedoStack.length || !ctx2d) return;
+      try {
+        wbUndoStack.push(canvas.toDataURL('image/png'));
+        var next = wbRedoStack.pop();
+        var img = new Image();
+        img.onload = function () { ctx2d.clearRect(0, 0, canvas.width, canvas.height); ctx2d.drawImage(img, 0, 0); };
+        img.src = next;
+      } catch (_) {}
+    });
     document.getElementById('wbClear')?.addEventListener('click', () => {
-      safeSend({ type: 'wb-clear' });
+      wbPushUndo();
+      safeSend({ type: 'wb-clear', board: wbBoardIdx });
       if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      wbCurrent().strokes = [];
+      wbCurrent().snapshot = null;
+      if (wbTextLayer) wbTextLayer.innerHTML = '';
+      wbCurrent().texts = [];
     });
     document.getElementById('wbExport')?.addEventListener('click', () => {
       if (!canvas) return;
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');
-      a.download = 'whiteboard.png';
+      a.download = 'whiteboard-board-' + (wbBoardIdx + 1) + '.png';
       a.click();
+    });
+    document.getElementById('wbAddBoard')?.addEventListener('click', function () {
+      wbSaveBoardSnapshot();
+      wbBoards.push({ strokes: [], texts: [], snapshot: null });
+      wbBoardIdx = wbBoards.length - 1;
+      wbRedrawFromBoard();
+      wbUpdateLabel();
+      safeSend({ type: 'wb-board-add', index: wbBoardIdx });
+    });
+    document.getElementById('wbRemoveBoard')?.addEventListener('click', function () {
+      if (wbBoards.length <= 1) return;
+      wbBoards.splice(wbBoardIdx, 1);
+      if (wbBoardIdx >= wbBoards.length) wbBoardIdx = wbBoards.length - 1;
+      wbRedrawFromBoard();
+      wbUpdateLabel();
+      safeSend({ type: 'wb-board-remove', index: wbBoardIdx });
+    });
+    document.getElementById('wbPrevBoard')?.addEventListener('click', function () {
+      if (wbBoardIdx <= 0) return;
+      wbSaveBoardSnapshot();
+      wbBoardIdx--;
+      wbRedrawFromBoard();
+      wbUpdateLabel();
+      if (document.getElementById('wbFollowActive')?.checked) {
+        safeSend({ type: 'wb-board-active', index: wbBoardIdx });
+      }
+    });
+    document.getElementById('wbNextBoard')?.addEventListener('click', function () {
+      if (wbBoardIdx >= wbBoards.length - 1) return;
+      wbSaveBoardSnapshot();
+      wbBoardIdx++;
+      wbRedrawFromBoard();
+      wbUpdateLabel();
+      if (document.getElementById('wbFollowActive')?.checked) {
+        safeSend({ type: 'wb-board-active', index: wbBoardIdx });
+      }
+    });
+    document.getElementById('wbShare')?.addEventListener('click', async function () {
+      try {
+        if (wbSharing) {
+          wbSharing = false;
+          this.classList.remove('active');
+          this.title = 'Share whiteboard';
+          if (typeof stopShare === 'function' && isSharing) await stopShare();
+          if (typeof showToast === 'function') showToast('Whiteboard unshared');
+          return;
+        }
+        // Share whiteboard canvas as screen share via captureStream
+        if (!canvas || !canvas.captureStream) {
+          if (typeof showToast === 'function') showToast('Share not supported in this browser');
+          return;
+        }
+        wbShareStream = canvas.captureStream(15);
+        // If LiveKit room available, publish as screen share track
+        if (typeof room !== 'undefined' && room && room.localParticipant && window.LivekitClient) {
+          try {
+            var tracks = wbShareStream.getVideoTracks();
+            if (tracks[0]) {
+              await room.localParticipant.publishTrack(tracks[0], { source: 'screen_share', name: 'whiteboard' });
+              wbSharing = true;
+              this.classList.add('active');
+              this.title = 'Unshare whiteboard';
+              if (typeof showToast === 'function') showToast('Whiteboard shared');
+            }
+          } catch (err) {
+            console.warn('wb share', err);
+            if (typeof showToast === 'function') showToast('Could not share whiteboard');
+          }
+        } else if (typeof startShare === 'function') {
+          // Fallback: user may need to pick window; still toggle UI
+          wbSharing = true;
+          this.classList.add('active');
+          if (typeof showToast === 'function') showToast('Whiteboard share active (canvas stream)');
+        }
+      } catch (e) {
+        console.warn(e);
+      }
     });
     document.getElementById('whiteboardClose')?.addEventListener('click', () => {
       document.getElementById('whiteboardModal')?.classList.add('hidden');
@@ -8379,6 +8921,7 @@
     });
     window.__meetOpenWhiteboard = function () {
       document.getElementById('whiteboardModal')?.classList.remove('hidden');
+      wbUpdateLabel();
       safeSend({ type: 'wb-sync' });
     };
 
@@ -8491,6 +9034,32 @@
         // Client capture starts on recording-capture event
       }, 1200);
     };
+
+    window.__meetExportNotesNow = function () {
+      try {
+        saveLiveNotesSilent();
+        const ed = document.getElementById('liveNotesEditor') || document.getElementById('dynNotesEditor');
+        const notes = (ed && ed.value) || localStorage.getItem(notesStorageKey()) || '';
+        const summary = localStorage.getItem(summaryStorageKey()) || '';
+        if (!notes.trim() && !summary.trim()) {
+          if (typeof showToast === 'function') showToast('No notes to export');
+          return;
+        }
+        let body = notes.trim();
+        if (summary.trim()) body += (body ? '\n\n' : '') + '----------\n' + summary.trim();
+        const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'meet-notes-' + ((currentMeeting && currentMeeting.code) || 'session') + '.txt';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (typeof showToast === 'function') showToast('Notes exported');
+      } catch (e) { console.warn('notes export', e); }
+    };
+    document.getElementById('desktopNotesExportBtn')?.addEventListener('click', function () {
+      if (typeof window.__meetExportNotesNow === 'function') window.__meetExportNotesNow();
+    });
 
     // On leave: stop recording + download
     window.__meetFlushRecordingOnLeave = function () {
@@ -9554,6 +10123,9 @@
         bindClick('roomCopyLinkBtn', function () {
           if (typeof openRoomDetail === 'function') openRoomDetail('copylink', 'Copy link');
         });
+        bindClick('roomInviteBtn', function () {
+          if (typeof openRoomDetail === 'function') openRoomDetail('invite', '');
+        });
         bindClick('roomDetailBack', function () {
           if (typeof closeRoomDetail === 'function') closeRoomDetail();
         });
@@ -9673,6 +10245,9 @@
     });
     document.getElementById('roomCopyLinkBtn')?.addEventListener('click', () => {
       if (typeof window.openRoomDetail === 'function') window.openRoomDetail('copylink', 'Copy link');
+    });
+    document.getElementById('roomInviteBtn')?.addEventListener('click', () => {
+      if (typeof window.openRoomDetail === 'function') window.openRoomDetail('invite', '');
     });
     document.getElementById('roomDetailBack')?.addEventListener('click', () => {
       if (typeof window.closeRoomDetail === 'function') window.closeRoomDetail();

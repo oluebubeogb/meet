@@ -4834,10 +4834,10 @@ body.dark .notifications-list li { background: rgba(255,255,255,.04); }
   justify-content: space-around;
   gap: 0.15rem;
   /* Clear system gesture / 3-button nav (Android) and home indicator (iOS).
-     safe-area alone is often 0 in some WebViews — enforce a real minimum. */
-  padding: 0.4rem 0.25rem max(1.35rem, calc(0.55rem + env(safe-area-inset-bottom, 0px)));
-  padding-bottom: max(1.35rem, calc(0.55rem + env(safe-area-inset-bottom, 0px)));
-  min-height: calc(52px + max(12px, env(safe-area-inset-bottom, 0px)));
+     Extra space so footer does not sit on top of Android 3-button nav. */
+  padding: 0.4rem 0.25rem max(2.1rem, calc(1.1rem + env(safe-area-inset-bottom, 0px)));
+  padding-bottom: max(2.1rem, calc(1.1rem + env(safe-area-inset-bottom, 0px)));
+  min-height: calc(56px + max(20px, env(safe-area-inset-bottom, 0px)));
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 97%, transparent);
   flex-shrink: 0;
@@ -7516,5 +7516,251 @@ html.dark .side-screen-cards .screen-card {
   #meetingView .col-1,
   #col1 {
     max-height: none !important;
+  }
+}
+
+
+/* ===== Meet UI fixes (connection, notes, whiteboard, titles) ===== */
+.dynamic-panel-title.hidden,
+#dynamicPanelTitle.hidden,
+#roomDetailTitle.hidden {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.dyn-child-back-bar,
+.dyn-back-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0 0.5rem;
+  min-height: 36px;
+}
+.dyn-child-back-bar .dyn-child-back,
+.dyn-back-bar .dyn-back-btn {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.05rem;
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+}
+.dyn-child-back-bar .dyn-child-back:hover,
+.dyn-back-bar .dyn-back-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* Notes export + max space */
+.notes-desktop-wrap,
+.dyn-notes-editor-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+}
+#notesTab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+}
+#notesTab.side-tab-panel.active,
+#notesTab.side-tab-panel:not(.hidden) {
+  display: flex !important;
+}
+.live-notes-full,
+#liveNotesEditor.live-notes-full,
+.dyn-notes-editor {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 0.75rem 0.75rem 2.75rem;
+  box-sizing: border-box;
+}
+.notes-export-btn {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary-soft, rgba(79,140,255,0.15));
+  color: var(--primary, #4f8cff);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.notes-export-btn:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* Whiteboard toolbar icons */
+.wb-modal-card { padding-top: 0.5rem; }
+.wb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+.wb-tool {
+  position: relative;
+}
+.wb-tool.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.wb-size-input {
+  width: 3.2rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.wb-pen-group { position: relative; }
+.wb-pen-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 120px;
+}
+.wb-pen-menu.hidden { display: none; }
+.wb-toolbar-spacer { flex: 1 1 auto; }
+.wb-boards-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.wb-board-label {
+  font-size: 0.8rem;
+  min-width: 3rem;
+  text-align: center;
+  color: var(--muted, #888);
+}
+.wb-follow-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted, #888);
+  cursor: pointer;
+  user-select: none;
+}
+.whiteboard-wrap {
+  position: relative;
+  width: 100%;
+  overflow: auto;
+  background: #fff;
+  border-radius: 8px;
+}
+.whiteboard-wrap canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+.wb-text-layer {
+  position: absolute;
+  left: 0; top: 0; right: 0; bottom: 0;
+  pointer-events: none;
+}
+.wb-text-layer .wb-textbox {
+  pointer-events: auto;
+  resize: both;
+  overflow: auto;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Media quality block in media tab */
+.media-quality-block {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.media-quality-block label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+}
+.media-quality-block select {
+  min-width: 7rem;
+}
+
+/* Room link invite box */
+.room-link-box {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.room-link-box input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+/* Diag grid readability */
+.diag-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 0.75rem;
+  margin-top: 0.75rem;
+}
+.diag-k { display: block; font-size: 0.72rem; color: var(--muted, #888); }
+.diag-v { font-weight: 600; font-size: 0.9rem; }
+.diag-status { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.diag-dot { width: 10px; height: 10px; border-radius: 50%; background: #2ecc71; display: inline-block; }
+.diag-dot.warn { background: #f39c12; }
+.diag-dot.bad { background: #e74c3c; }
+.diag-dot.good { background: #2ecc71; }
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .mobile-footer-nav {
+    padding-bottom: max(2.25rem, calc(1.25rem + env(safe-area-inset-bottom, 0px)));
+  }
+  body.in-meeting-mobile #meetingView {
+    padding-bottom: 0;
   }
 }

@@ -495,7 +495,10 @@
             
             <!-- NOTES TAB (desktop sidebar) -->
             <div class="side-tab-panel hidden notes-desktop-only" id="notesTab" data-tab="notes" role="tabpanel">
-              <textarea id="liveNotesEditor" placeholder="Notes…"></textarea>
+              <div class="notes-desktop-wrap">
+                <textarea id="liveNotesEditor" class="live-notes-full" placeholder="Notes…"></textarea>
+                <button type="button" class="btn icon-btn notes-export-btn" id="desktopNotesExportBtn" title="Export notes" aria-label="Export notes"><i class="fa-solid fa-file-export"></i></button>
+              </div>
               <div id="meetingSummaryBox" class="summary-box hidden" contenteditable="true"></div>
               <button type="button" id="liveNotesSave" class="hidden" tabindex="-1" aria-hidden="true"></button>
               <button type="button" id="summaryGenerateBtn" class="hidden" tabindex="-1"></button>
@@ -559,6 +562,26 @@
                     <input type="file" id="stImageInputMedia" accept="image/*" multiple hidden>
                   </div>
                 </div>
+
+                <div class="more-hub-section">Media quality</div>
+                <div class="quality-block media-quality-block">
+                  <label title="Your outgoing screen quality">
+                    <span>Your screen</span>
+                    <select id="sendQualitySelectMedia" aria-label="Send screen quality" class="send-quality-select">
+                      <option value="high" selected>High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </label>
+                  <label title="How you view others' screens">
+                    <span>Incoming</span>
+                    <select id="viewQualitySelectMedia" aria-label="View screen quality" class="view-quality-select">
+                      <option value="high" selected>High</option>
+                      <option value="medium">Medium</option>
+                      <option value="off">Audio only</option>
+                    </select>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -579,6 +602,7 @@
               <div class="panel-block media-panel-block" id="roomMenuLine">
                 <button type="button" class="more-item media-row-item" id="roomSecurityBtn" data-pane="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
                 <button type="button" class="more-item media-row-item" id="roomCopyLinkBtn" data-pane="copylink"><i class="fa-solid fa-link"></i> Copy link</button>
+                <button type="button" class="more-item media-row-item" id="roomInviteBtn" data-pane="invite"><i class="fa-solid fa-user-plus"></i> Invite</button>
                 <button type="button" class="more-item media-row-item" id="roomHandBtn" data-pane="hands"><i class="fa-solid fa-hand"></i> Hand</button>
                 <button type="button" class="more-item media-row-item" id="roomActivityBtn" data-pane="activity"><i class="fa-solid fa-list"></i> Meeting activity</button>
                 <button type="button" class="more-item media-row-item" id="roomConnectionBtn" data-pane="connection"><i class="fa-solid fa-signal"></i> Connection</button>
@@ -846,7 +870,6 @@
               <div class="meeting-more-wrap">
                 <button id="meetingMoreBtn" class="btn call-btn" title="More" aria-label="More controls" aria-haspopup="true" aria-expanded="false">
                   <i class="fa-solid fa-ellipsis"></i>
-                  <span>More</span>
                 </button>
                 <div id="meetingMorePanel" class="meeting-more-panel hidden" role="menu">
                   
@@ -1218,6 +1241,7 @@
             <div><span class="diag-k">Video</span><span id="diagVideo" class="diag-v">—</span></div>
             <div><span class="diag-k">Screen share</span><span id="diagShare" class="diag-v">—</span></div>
             <div><span class="diag-k">Network</span><span id="diagNetwork" class="diag-v">—</span></div>
+            <div><span class="diag-k">Signaling</span><span id="diagSignaling" class="diag-v">—</span></div>
           </div>
           <p id="diagHint" class="diag-hint"></p>
         </div>
@@ -1247,17 +1271,42 @@
     <!-- Whiteboard modal -->
     <div id="whiteboardModal" class="modal hidden">
       <div class="modal-backdrop" id="whiteboardModalBackdrop"></div>
-      <div class="modal-card" style="max-width:900px;width:95%">
-        <h2>Whiteboard</h2>
-        <div class="wb-toolbar">
+      <div class="modal-card wb-modal-card" style="max-width:960px;width:96%">
+        <div class="wb-toolbar" role="toolbar" aria-label="Whiteboard tools">
+          <div class="wb-tool-group wb-pen-group">
+            <button type="button" class="btn icon-btn wb-tool active" id="wbPen" title="Pen" aria-label="Pen"><i class="fa-solid fa-pen"></i></button>
+            <div class="wb-pen-menu hidden" id="wbPenMenu">
+              <button type="button" class="btn small-btn wb-pen-opt" data-tool="pencil" title="Pencil"><i class="fa-solid fa-pencil"></i> Pencil</button>
+              <button type="button" class="btn small-btn wb-pen-opt" data-tool="brush" title="Brush"><i class="fa-solid fa-paintbrush"></i> Brush</button>
+            </div>
+          </div>
+          <input type="number" id="wbSize" class="wb-size-input" min="1" max="48" value="3" title="Stroke size" aria-label="Stroke size" inputmode="numeric">
           <input type="color" id="wbColor" value="#111111" title="Color">
-          <button type="button" class="btn small-btn" id="wbPen">Pen</button>
-          <button type="button" class="btn small-btn" id="wbEraser">Eraser</button>
-          <button type="button" class="btn small-btn" id="wbClear">Clear</button>
-          <button type="button" class="btn small-btn" id="wbExport">Export PNG</button>
-          <button type="button" class="btn small-btn" id="whiteboardClose">Close</button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbEraser" title="Eraser" aria-label="Eraser"><i class="fa-solid fa-eraser"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbText" title="Text box" aria-label="Text box"><i class="fa-solid fa-font"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbUndo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbRedo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbClear" title="Clear" aria-label="Clear"><i class="fa-solid fa-trash"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbExport" title="Export" aria-label="Export"><i class="fa-solid fa-download"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbShare" title="Share whiteboard" aria-label="Share whiteboard"><i class="fa-solid fa-share-nodes"></i></button>
+          <span class="wb-toolbar-spacer"></span>
+          <div class="wb-boards-nav">
+            <button type="button" class="btn icon-btn" id="wbPrevBoard" title="Previous board" aria-label="Previous board"><i class="fa-solid fa-chevron-left"></i></button>
+            <span id="wbBoardLabel" class="wb-board-label">1 / 1</span>
+            <button type="button" class="btn icon-btn" id="wbNextBoard" title="Next board" aria-label="Next board"><i class="fa-solid fa-chevron-right"></i></button>
+            <button type="button" class="btn icon-btn" id="wbAddBoard" title="Add board" aria-label="Add board"><i class="fa-solid fa-plus"></i></button>
+            <button type="button" class="btn icon-btn" id="wbRemoveBoard" title="Remove board" aria-label="Remove board"><i class="fa-solid fa-minus"></i></button>
+          </div>
+          <label class="wb-follow-label" title="Viewers follow the active board">
+            <input type="checkbox" id="wbFollowActive" checked>
+            <span>Follow active</span>
+          </label>
+          <button type="button" class="btn icon-btn" id="whiteboardClose" title="Close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <div class="whiteboard-wrap"><canvas id="whiteboardCanvas" width="1200" height="720"></canvas></div>
+        <div class="whiteboard-wrap" id="whiteboardWrap">
+          <canvas id="whiteboardCanvas" width="1200" height="720"></canvas>
+          <div id="wbTextLayer" class="wb-text-layer"></div>
+        </div>
       </div>
     </div>
 
