@@ -6498,7 +6498,29 @@ html.dark #meetingView video {
 html.dark .stage-idle-bg {
   background-image: url('images/dark-mode-meeting.webp') !important;
 }
-#bigPlaceholder.stage-idle-bg * { display: none !important; }
+/* Hide legacy text/icons inside idle bg, but keep clock + motivators */
+#bigPlaceholder.stage-idle-bg > :not(.idle-analog-clock):not(#idleAnalogClock):not(.idle-motivator):not(#idleMotivator) {
+  display: none !important;
+}
+#bigPlaceholder.stage-idle-bg .idle-analog-clock,
+#bigPlaceholder.stage-idle-bg #idleAnalogClock {
+  display: block !important;
+  position: relative;
+  z-index: 3;
+  pointer-events: none;
+}
+#bigPlaceholder.stage-idle-bg .idle-motivator,
+#bigPlaceholder.stage-idle-bg #idleMotivator {
+  display: block !important;
+  z-index: 4;
+  pointer-events: none;
+}
+#bigPlaceholder.stage-idle-bg {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  z-index: 1 !important;
+}
 #meetingView.meet-rail-layout #bigView.has-active-share .stage-idle-bg,
 #meetingView.meet-rail-layout .big-view.has-active-share .stage-idle-bg {
   display: none !important;
