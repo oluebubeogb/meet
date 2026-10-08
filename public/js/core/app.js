@@ -8652,53 +8652,42 @@
       if (!ctx2d || !stroke.points || !stroke.points.length) return;
       var tool = stroke.tool || 'pen';
       var w = wbEffectiveWidth(tool, stroke.width || stroke.baseWidth || 2);
-      if (stroke.erase || tool === 'eraser') {
-        ctx2d.save();
-        ctx2d.globalCompositeOperation = 'source-over';
-        ctx2d.strokeStyle = '#ffffff';
-        ctx2d.lineWidth = w;
-        ctx2d.lineCap = 'round';
-        ctx2d.lineJoin = 'round';
-        ctx2d.beginPath();
-        stroke.points.forEach(function (pt, i) {
-          if (i === 0) ctx2d.moveTo(pt.x, pt.y);
-          else ctx2d.lineTo(pt.x, pt.y);
-        });
-        ctx2d.stroke();
-        ctx2d.restore();
-        return;
-      }
       ctx2d.save();
       ctx2d.globalCompositeOperation = 'source-over';
-      ctx2d.strokeStyle = stroke.color || '#111111';
-      ctx2d.lineWidth = w;
-      ctx2d.lineCap = tool === 'brush' ? 'round' : 'round';
+      ctx2d.lineCap = 'round';
       ctx2d.lineJoin = 'round';
-      if (tool === 'brush') {
-        ctx2d.globalAlpha = 0.55;
-        ctx2d.lineWidth = w;
-      } else if (tool === 'pencil') {
-        ctx2d.globalAlpha = 0.9;
-      } else {
+      ctx2d.miterLimit = 2;
+      if (stroke.erase || tool === 'eraser') {
+        ctx2d.strokeStyle = '#ffffff';
         ctx2d.globalAlpha = 1;
+        ctx2d.lineWidth = w;
+      } else {
+        ctx2d.strokeStyle = stroke.color || '#111111';
+        // pencil: thin solid; pen: medium solid; brush: much wider, slightly faint (single pass — no bumps)
+        if (tool === 'brush') {
+          ctx2d.globalAlpha = 0.42;
+          ctx2d.lineWidth = w;
+        } else if (tool === 'pencil') {
+          ctx2d.globalAlpha = 0.92;
+          ctx2d.lineWidth = w;
+        } else {
+          ctx2d.globalAlpha = 1;
+          ctx2d.lineWidth = w;
+        }
       }
+      // Single continuous path so round caps don't stack as circle bumps
       ctx2d.beginPath();
-      stroke.points.forEach(function (pt, i) {
-        if (i === 0) ctx2d.moveTo(pt.x, pt.y);
-        else ctx2d.lineTo(pt.x, pt.y);
-      });
-      ctx2d.stroke();
-      // Extra soft pass for brush feel
-      if (tool === 'brush' && stroke.points.length > 1) {
-        ctx2d.globalAlpha = 0.25;
-        ctx2d.lineWidth = w * 1.35;
-        ctx2d.beginPath();
-        stroke.points.forEach(function (pt, i) {
-          if (i === 0) ctx2d.moveTo(pt.x, pt.y);
-          else ctx2d.lineTo(pt.x, pt.y);
-        });
-        ctx2d.stroke();
+      var pts = stroke.points;
+      if (pts.length === 1) {
+        ctx2d.moveTo(pts[0].x, pts[0].y);
+        ctx2d.lineTo(pts[0].x + 0.01, pts[0].y);
+      } else {
+        ctx2d.moveTo(pts[0].x, pts[0].y);
+        for (var i = 1; i < pts.length; i++) {
+          ctx2d.lineTo(pts[i].x, pts[i].y);
+        }
       }
+      ctx2d.stroke();
       ctx2d.restore();
     }
     function wbPushUndo() {
@@ -8876,6 +8865,8 @@
     function wbPaintShareFrame() {
       var sc = ensureShareCanvas();
       if (!sc || !wbShareCtx || !canvas) return;
+      wbShareCtx.imageSmoothingEnabled = true;
+      try { wbShareCtx.imageSmoothingQuality = 'high'; } catch (_) {}
       wbFillWhite(wbShareCtx, sc.width, sc.height);
       wbShareCtx.drawImage(canvas, 0, 0);
       // Draw text boxes as canvas text (no borders)
@@ -8970,6 +8961,11 @@
       }
     }
 
+    var wbLiveSnap = null;
+    function wbRestoreLiveSnap() {
+      if (!ctx2d || !canvas || !wbLiveSnap) return;
+      try { ctx2d.putImageData(wbLiveSnap, 0, 0); } catch (_) {}
+    }
     if (canvas && ctx2d) {
       canvas.addEventListener('mousedown', function (e) {
         if (wbTool === 'select') {
@@ -8978,7 +8974,6 @@
         }
         if (wbTool === 'text') {
           var p = wbPos(e);
-          // Convert to CSS pixel coords for layer
           var rect = canvas.getBoundingClientRect();
           var cssX = e.clientX - rect.left;
           var cssY = e.clientY - rect.top;
@@ -9001,12 +8996,16 @@
         wbPushUndo();
         wbDrawing = true;
         wbPoints = [wbPos(e)];
+        // Snapshot so live stroke can be redrawn as one continuous path (no stacked round-cap bumps)
+        try { wbLiveSnap = ctx2d.getImageData(0, 0, canvas.width, canvas.height); } catch (_) { wbLiveSnap = null; }
       });
       canvas.addEventListener('mousemove', function (e) {
         if (!wbDrawing) return;
         wbPoints.push(wbPos(e));
+        // Redraw entire in-progress stroke as a single path → smooth line, no circle bumps
+        wbRestoreLiveSnap();
         drawStroke({
-          points: wbPoints.slice(-2),
+          points: wbPoints.slice(),
           color: document.getElementById('wbColor')?.value,
           erase: wbErase || wbTool === 'eraser',
           width: wbSizeVal(),
@@ -9018,6 +9017,7 @@
         if (!wbDrawing) return;
         wbDrawing = false;
         if (wbPoints.length > 1) {
+          wbRestoreLiveSnap();
           var stroke = {
             points: wbPoints.slice(),
             color: document.getElementById('wbColor')?.value || '#111111',
@@ -9026,6 +9026,7 @@
             baseWidth: wbSizeVal(),
             tool: wbTool,
           };
+          drawStroke(stroke);
           wbCurrent().strokes = wbCurrent().strokes || [];
           wbCurrent().strokes.push(stroke);
           try {
@@ -9041,6 +9042,7 @@
           } catch (_) {}
         }
         wbPoints = [];
+        wbLiveSnap = null;
         wbSaveBoardSnapshot();
       };
       canvas.addEventListener('mouseup', endDraw);
@@ -9203,19 +9205,40 @@
         }
         // Stop any previous share cleanly first
         await wbUnpublishShare();
-        wbShareStream = wbShareCanvas.captureStream(15);
+        // Capture at 30fps from high-res composite (1920×1080) for sharp text/lines
+        wbShareStream = wbShareCanvas.captureStream(30);
         var mediaTrack = wbShareStream.getVideoTracks()[0];
         if (!mediaTrack) {
           if (typeof showToast === 'function') showToast('Could not capture whiteboard');
           return;
         }
         try { mediaTrack.contentHint = 'detail'; } catch (_) {}
+        try {
+          if (mediaTrack.applyConstraints) {
+            mediaTrack.applyConstraints({
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 30, max: 30 }
+            }).catch(function () {});
+          }
+        } catch (_) {}
 
         if (typeof room !== 'undefined' && room && room.localParticipant) {
           try {
             var LK = window.LivekitClient || window.LiveKit || null;
-            var pubOpts = { name: 'whiteboard', source: (LK && LK.Track && LK.Track.Source && LK.Track.Source.ScreenShare) || 'screen_share' };
-            // LiveKit: publish MediaStreamTrack
+            var src = (LK && LK.Track && LK.Track.Source && LK.Track.Source.ScreenShare) || 'screen_share';
+            // Match high screen-share encoding so receivers get a crisp board
+            var pubOpts = {
+              name: 'whiteboard',
+              source: src,
+              simulcast: false,
+              videoCodec: 'vp8',
+              videoEncoding: {
+                maxBitrate: 8_000_000,
+                maxFramerate: 30,
+              },
+              degradationPreference: 'maintain-resolution',
+            };
             var published = await room.localParticipant.publishTrack(mediaTrack, pubOpts);
             wbShareTrack = (published && published.track) || mediaTrack;
             wbSharing = true;
@@ -9225,14 +9248,19 @@
             if (typeof showToast === 'function') showToast('Whiteboard shared');
           } catch (err) {
             console.warn('wb share', err);
-            // Retry once after forced unpublish of all screen shares named whiteboard
             try {
               await wbUnpublishShare();
               ensureShareCanvas();
               wbPaintShareFrame();
-              wbShareStream = wbShareCanvas.captureStream(15);
+              wbShareStream = wbShareCanvas.captureStream(30);
               mediaTrack = wbShareStream.getVideoTracks()[0];
-              var published2 = await room.localParticipant.publishTrack(mediaTrack, { name: 'whiteboard' });
+              try { mediaTrack.contentHint = 'detail'; } catch (_) {}
+              var published2 = await room.localParticipant.publishTrack(mediaTrack, {
+                name: 'whiteboard',
+                simulcast: false,
+                videoEncoding: { maxBitrate: 8_000_000, maxFramerate: 30 },
+                degradationPreference: 'maintain-resolution',
+              });
               wbShareTrack = (published2 && published2.track) || mediaTrack;
               wbSharing = true;
               this.classList.add('active');
