@@ -565,18 +565,20 @@
 
                 <div class="more-hub-section">Media quality</div>
                 <div class="quality-block media-quality-block">
-                  <label title="Your outgoing screen quality">
+                  <label title="Outgoing screenshare quality. Auto matches the shared tab/window size and fps.">
                     <span>Your screen</span>
                     <select id="sendQualitySelectMedia" aria-label="Send screen quality" class="send-quality-select">
-                      <option value="high" selected>High</option>
+                      <option value="auto" selected>Auto (match capture)</option>
+                      <option value="high">High</option>
                       <option value="medium">Medium</option>
                       <option value="low">Low</option>
                     </select>
                   </label>
-                  <label title="How you view others' screens">
+                  <label title="Incoming screenshare quality. Auto requests the best available stream.">
                     <span>Incoming</span>
                     <select id="viewQualitySelectMedia" aria-label="View screen quality" class="view-quality-select">
-                      <option value="high" selected>High</option>
+                      <option value="auto" selected>Auto</option>
+                      <option value="high">High</option>
                       <option value="medium">Medium</option>
                       <option value="off">Audio only</option>
                     </select>
@@ -883,18 +885,20 @@
                   <div class="more-sep"></div>
                   <div class="more-section-label">Media quality</div>
                   <div class="quality-block">
-                    <label title="Your outgoing screen quality">
+                    <label title="Outgoing screenshare quality. Auto matches the shared tab/window size and fps.">
                       <span>Your screen</span>
                       <select id="sendQualitySelect" aria-label="Send screen quality">
-                        <option value="high" selected>High</option>
+                        <option value="auto" selected>Auto (match capture)</option>
+                        <option value="high">High</option>
                         <option value="medium">Medium</option>
                         <option value="low">Low</option>
                       </select>
                     </label>
-                    <label title="How you view others' screens">
+                    <label title="Incoming screenshare quality. Auto requests the best available stream.">
                       <span>Incoming</span>
                       <select id="viewQualitySelect" aria-label="View screen quality">
-                        <option value="high" selected>High</option>
+                        <option value="auto" selected>Auto</option>
+                        <option value="high">High</option>
                         <option value="medium">Medium</option>
                         <option value="off">Audio only</option>
                       </select>

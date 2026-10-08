@@ -1634,8 +1634,17 @@
     renderCards();
   }
 
-  // Sender encode presets (highest available path = high)
+  // Sender encode presets (screenshare only — timeline/whiteboard unaffected)
+  // "auto" matches the captured surface (tab/window) width/height/fps after getDisplayMedia.
+  // Note: browsers cannot read YouTube's internal player quality label; only the
+  // pixel size of the shared surface is available via MediaStreamTrack.getSettings().
   const SEND_QUALITY = {
+    auto: {
+      // Placeholder; real values computed from the live capture track in startShare.
+      maxBitrate: 6_000_000,
+      maxFramerate: 30,
+      resolution: { width: 1920, height: 1080, frameRate: 30 },
+    },
     high: {
       maxBitrate: 10_000_000,
       maxFramerate: 30,
@@ -1652,12 +1661,55 @@
       resolution: { width: 960, height: 540, frameRate: 15 },
     },
   };
-  let sendQuality = localStorage.getItem('meet-send-quality') || 'high';
-  if (!SEND_QUALITY[sendQuality]) sendQuality = 'high';
-  let viewQuality = localStorage.getItem('meet-view-quality') || 'high';
-  if (!['high', 'medium', 'off'].includes(viewQuality)) viewQuality = 'high';
+  let sendQuality = localStorage.getItem('meet-send-quality') || 'auto';
+  if (!SEND_QUALITY[sendQuality]) sendQuality = 'auto';
+  let viewQuality = localStorage.getItem('meet-view-quality') || 'auto';
+  if (!['auto', 'high', 'medium', 'off'].includes(viewQuality)) viewQuality = 'auto';
 
-  function getSendPreset() {
+  /** Build encode preset from actual capture track settings (auto mode). */
+  function presetFromCaptureTrack(track) {
+    let w = 1280, h = 720, fps = 30;
+    try {
+      const mst = track && (track.mediaStreamTrack || track);
+      const s = mst && typeof mst.getSettings === 'function' ? mst.getSettings() : null;
+      if (s) {
+        if (s.width) w = s.width | 0;
+        if (s.height) h = s.height | 0;
+        if (s.frameRate) fps = s.frameRate;
+      }
+      // Fallback: LocalVideoTrack.dimensions if settings incomplete
+      if (track && track.dimensions) {
+        if (!s || !s.width) w = track.dimensions.width || w;
+        if (!s || !s.height) h = track.dimensions.height || h;
+      }
+    } catch (_) {}
+    // Cap at 1080p / 30fps — higher is rarely useful for screen share and burns CPU/bandwidth
+    w = Math.min(Math.max(w, 320), 1920);
+    h = Math.min(Math.max(h, 240), 1080);
+    fps = Math.min(Math.max(Math.round(fps) || 30, 10), 30);
+    // Motion screen-share bitrate ladder (rough bits-per-pixel heuristic, clamped)
+    const pixels = w * h;
+    let maxBitrate;
+    if (pixels >= 1920 * 1000) maxBitrate = 6_000_000;      // ~1080p
+    else if (pixels >= 1280 * 700) maxBitrate = 4_000_000;  // ~720p
+    else if (pixels >= 960 * 500) maxBitrate = 2_500_000;   // ~540p
+    else maxBitrate = 1_500_000;
+    // Scale a bit with fps (15fps needs less than 30fps)
+    maxBitrate = Math.round(maxBitrate * Math.min(fps, 30) / 30);
+    maxBitrate = Math.max(maxBitrate, 800_000);
+    return {
+      maxBitrate,
+      maxFramerate: fps,
+      resolution: { width: w, height: h, frameRate: fps },
+      detected: { width: w, height: h, frameRate: fps },
+    };
+  }
+
+  function getSendPreset(track) {
+    if (sendQuality === 'auto') {
+      if (track) return presetFromCaptureTrack(track);
+      return SEND_QUALITY.auto;
+    }
     return SEND_QUALITY[sendQuality] || SEND_QUALITY.high;
   }
 
@@ -1672,9 +1724,12 @@
         publication.setSubscribed(true);
       }
       if (publication.setVideoQuality && LK.VideoQuality) {
-        publication.setVideoQuality(
-          viewQuality === 'medium' ? LK.VideoQuality.MEDIUM : LK.VideoQuality.HIGH
-        );
+        // auto + high → request best available layer (with simulcast off this is the only layer)
+        // medium → explicit mid; LiveKit may still deliver the single published layer
+        const q = viewQuality === 'medium'
+          ? LK.VideoQuality.MEDIUM
+          : LK.VideoQuality.HIGH; // auto and high
+        publication.setVideoQuality(q);
       }
     } catch (_) {}
   }
@@ -1690,7 +1745,7 @@
           const p = ph.querySelector('p');
           if (p) p.textContent = 'Audio only — screen hidden';
           const sub = ph.querySelector('.sub');
-          if (sub) sub.textContent = 'Sound still plays; pick High/Medium under View to show video';
+          if (sub) sub.textContent = 'Sound still plays; pick Auto/High/Medium under View to show video';
         }
       }
     }
@@ -1749,24 +1804,31 @@
       alert(screenShareUnsupportedMessage());
       return;
     }
-    const preset = getSendPreset();
+    // Capture request: auto asks browser for native surface size; fixed presets request a target.
+    const capturePreset = sendQuality === 'auto'
+      ? { width: 1920, height: 1080, frameRate: 30 } // ideal max; browser returns actual surface size
+      : (getSendPreset().resolution);
     try {
-      // motion + high bitrate keeps YouTube clearer while playing (not only when paused)
+      // motion + bitrate matched to capture keeps YouTube smoother while playing
       if (typeof room.localParticipant.createScreenTracks === 'function') {
         const tracks = await room.localParticipant.createScreenTracks({
           audio: true,
-          resolution: preset.resolution,
+          resolution: capturePreset,
           contentHint: 'motion',
         });
         for (const track of tracks) {
           if (track.mediaStreamTrack && track.kind === 'video') {
             try { track.mediaStreamTrack.contentHint = 'motion'; } catch (_) {}
           }
+          // Auto: derive encode params from the real captured track (what the sharer sees)
+          const preset = getSendPreset(track.kind === 'video' ? track : null);
           console.log('[LiveKit] publishing screen track', {
             kind: track.kind,
             sendQuality,
             maxBitrate: preset.maxBitrate,
             maxFramerate: preset.maxFramerate,
+            resolution: preset.resolution,
+            detected: preset.detected || null,
           });
           await room.localParticipant.publishTrack(track, {
             source: track.kind === 'video' ? LK.Track.Source.ScreenShare : LK.Track.Source.ScreenShareAudio,
@@ -1776,10 +1838,12 @@
               maxBitrate: preset.maxBitrate,
               maxFramerate: preset.maxFramerate,
             },
-            degradationPreference: 'maintain-resolution',
+            // balanced for motion (YouTube): prefer smooth fps over rigid resolution under load
+            degradationPreference: sendQuality === 'auto' ? 'balanced' : 'maintain-resolution',
           });
         }
       } else {
+        const preset = getSendPreset();
         await room.localParticipant.setScreenShareEnabled(true, {
           audio: true,
           resolution: preset.resolution,
@@ -2786,13 +2850,14 @@
   });
 
   // Screen quality controls (send = encode, view = subscribe / hide video)
+  // Only affects LiveKit screenshare tracks — not screen timeline images or whiteboard.
   (function initQualityControls() {
     function bindSend(sel) {
       if (!sel) return;
       sel.value = sendQuality;
       sel.addEventListener('change', async function () {
         sendQuality = sel.value;
-        if (!SEND_QUALITY[sendQuality]) sendQuality = 'high';
+        if (!SEND_QUALITY[sendQuality]) sendQuality = 'auto';
         try { localStorage.setItem('meet-send-quality', sendQuality); } catch (_) {}
         document.querySelectorAll('.send-quality-select, #sendQualitySelect, #sendQualitySelectMedia').forEach(function (o) {
           if (o !== sel) o.value = sendQuality;
@@ -2807,7 +2872,7 @@
       sel.value = viewQuality;
       sel.addEventListener('change', function () {
         viewQuality = sel.value;
-        if (!['high', 'medium', 'off'].includes(viewQuality)) viewQuality = 'high';
+        if (!['auto', 'high', 'medium', 'off'].includes(viewQuality)) viewQuality = 'auto';
         try { localStorage.setItem('meet-view-quality', viewQuality); } catch (_) {}
         document.querySelectorAll('.view-quality-select, #viewQualitySelect, #viewQualitySelectMedia').forEach(function (o) {
           if (o !== sel) o.value = viewQuality;
