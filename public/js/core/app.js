@@ -11504,10 +11504,12 @@
     var hourEl = document.getElementById('clkHour');
     var minEl = document.getElementById('clkMinute');
     var secEl = document.getElementById('clkSecond');
+    var digEl = document.getElementById('clkDigital');
     var motivEl = document.getElementById('idleMotivator');
     var ph = document.getElementById('bigPlaceholder');
     if (!hourEl || !minEl || !secEl) return;
 
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
     function tickClock() {
       var now = new Date();
       var s = now.getSeconds() + now.getMilliseconds() / 1000;
@@ -11516,31 +11518,20 @@
       secEl.style.transform = 'rotate(' + (s * 6) + 'deg)';
       minEl.style.transform = 'rotate(' + (m * 6) + 'deg)';
       hourEl.style.transform = 'rotate(' + (h * 30) + 'deg)';
+      if (digEl) {
+        digEl.textContent = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+      }
     }
     tickClock();
     setInterval(tickClock, 50);
 
     var lines = (window.MEET_MOTIVATORS && window.MEET_MOTIVATORS.slice()) || [
-      'Progress, not perfection. 💪'
+      'Progress matters more than perfection 💪; show up again tomorrow.'
     ];
     var motivTimer = null;
-    var typing = false;
-
-    function placeMotivator() {
-      if (!motivEl || !ph) return;
-      var w = ph.clientWidth || 300;
-      var h = ph.clientHeight || 200;
-      var pad = 24;
-      var left = pad + Math.random() * Math.max(40, w - 220 - pad * 2);
-      var top = pad + Math.random() * Math.max(40, h - 80 - pad * 2);
-      motivEl.style.left = left + 'px';
-      motivEl.style.top = top + 'px';
-      motivEl.style.right = 'auto';
-      motivEl.style.bottom = 'auto';
-    }
 
     function typeLine(text, done) {
-      typing = true;
+      if (!motivEl) return;
       motivEl.classList.add('visible');
       motivEl.innerHTML = '';
       var i = 0;
@@ -11551,9 +11542,8 @@
           motivEl.textContent = text.slice(0, i);
           motivEl.appendChild(cursor);
           i++;
-          setTimeout(step, 28 + Math.random() * 36);
+          setTimeout(step, 26 + Math.random() * 32);
         } else {
-          typing = false;
           if (done) done();
         }
       }
@@ -11565,13 +11555,17 @@
         motivTimer = setTimeout(cycleMotivator, 4000);
         return;
       }
+      // Fixed center — CSS positions; do not randomize
+      motivEl.style.left = '';
+      motivEl.style.top = '';
+      motivEl.style.right = '';
+      motivEl.style.bottom = '';
       var text = lines[Math.floor(Math.random() * lines.length)];
-      placeMotivator();
       typeLine(text, function () {
         setTimeout(function () {
           motivEl.classList.remove('visible');
           setTimeout(cycleMotivator, 1200 + Math.random() * 2000);
-        }, 3200 + Math.random() * 1800);
+        }, 3600 + Math.random() * 1600);
       });
     }
     setTimeout(cycleMotivator, 1500);

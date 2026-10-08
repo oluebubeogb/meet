@@ -6505,7 +6505,6 @@ html.dark .stage-idle-bg {
 #bigPlaceholder.stage-idle-bg .idle-analog-clock,
 #bigPlaceholder.stage-idle-bg #idleAnalogClock {
   display: block !important;
-  position: relative;
   z-index: 3;
   pointer-events: none;
 }
@@ -6516,9 +6515,7 @@ html.dark .stage-idle-bg {
   pointer-events: none;
 }
 #bigPlaceholder.stage-idle-bg {
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
+  display: block !important;
   z-index: 1 !important;
 }
 #meetingView.meet-rail-layout #bigView.has-active-share .stage-idle-bg,
@@ -8021,34 +8018,39 @@ html.dark .breakout-room-block {
 .stage-idle-bg {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
   pointer-events: none;
   z-index: 1;
 }
 .stage-idle-bg.hidden { display: none !important; }
+
+/* Clock: top-right, ~20% inset from top and right (desktop + mobile/tablet) */
 .idle-analog-clock {
-  width: min(28vmin, 160px);
-  height: min(28vmin, 160px);
-  border-radius: 50%;
-  border: 2px solid rgba(98, 91, 255, 0.35);
-  background: rgba(255,255,255,0.55);
-  box-shadow: 0 4px 24px rgba(98, 91, 255, 0.12);
-  position: relative;
+  position: absolute !important;
+  top: 20% !important;
+  right: 20% !important;
+  left: auto !important;
+  bottom: auto !important;
+  width: min(22vmin, 130px);
+  height: min(22vmin, 130px);
+  border-radius: 0;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
   flex-shrink: 0;
+  z-index: 3;
+  pointer-events: none;
 }
 html.dark .idle-analog-clock {
-  background: rgba(20, 22, 30, 0.65);
-  border-color: rgba(98, 91, 255, 0.5);
-  box-shadow: 0 4px 28px rgba(0,0,0,0.35);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 .idle-analog-clock .clk-center {
   position: absolute;
   left: 50%; top: 50%;
-  width: 8px; height: 8px;
-  margin: -4px 0 0 -4px;
+  width: 6px; height: 6px;
+  margin: -3px 0 0 -3px;
   border-radius: 50%;
   background: var(--primary, #625BFF);
   z-index: 4;
@@ -8064,39 +8066,74 @@ html.dark .idle-analog-clock {
 html.dark .idle-analog-clock .clk-hand { background: #e8e9ef; }
 .idle-analog-clock .clk-hour {
   width: 3px;
-  height: 28%;
+  height: 26%;
   margin-left: -1.5px;
   background: var(--primary, #625BFF);
 }
 .idle-analog-clock .clk-minute {
   width: 2px;
-  height: 38%;
+  height: 36%;
   margin-left: -1px;
 }
 .idle-analog-clock .clk-second {
   width: 1.5px;
-  height: 42%;
+  height: 40%;
   margin-left: -0.75px;
   background: #e74c3c;
 }
-.idle-motivator {
+/* Tiny digital time near clock center */
+.idle-analog-clock .clk-digital {
   position: absolute;
-  max-width: min(70%, 320px);
-  padding: 0.35rem 0.55rem;
-  font-size: clamp(0.78rem, 2.2vmin, 1rem);
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  font-size: clamp(0.55rem, 1.6vmin, 0.72rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--text, #171A2B);
+  opacity: 0.75;
+  white-space: nowrap;
+  z-index: 5;
+  line-height: 1;
+  pointer-events: none;
+}
+html.dark .idle-analog-clock .clk-digital {
+  color: #e8e9ef;
+  opacity: 0.8;
+}
+
+/* Motivators: fixed center, wrap to ~2 lines */
+.idle-motivator {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%);
+  width: min(72%, 420px);
+  max-width: min(72%, 420px);
+  padding: 0.4rem 0.75rem;
+  font-size: clamp(0.82rem, 2.4vmin, 1.05rem);
   font-weight: 500;
+  line-height: 1.45;
   color: var(--text, #171A2B);
   opacity: 0;
-  white-space: pre-wrap;
+  white-space: normal;
   text-align: center;
   pointer-events: none;
-  text-shadow: 0 1px 8px rgba(255,255,255,0.5);
+  text-shadow: 0 1px 10px rgba(255,255,255,0.55);
   transition: opacity 0.45s ease;
-  z-index: 2;
+  z-index: 4;
+  /* encourage ~2-line wrap */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 html.dark .idle-motivator {
   color: #e8e9ef;
-  text-shadow: 0 1px 10px rgba(0,0,0,0.45);
+  text-shadow: 0 1px 12px rgba(0,0,0,0.5);
 }
 .idle-motivator.visible { opacity: 1; }
 .idle-motivator .typed-cursor {
@@ -8111,6 +8148,21 @@ html.dark .idle-motivator {
 @keyframes idleCursorBlink {
   50% { opacity: 0; }
 }
+
+@media (max-width: 900px) {
+  .idle-analog-clock {
+    top: 18% !important;
+    right: 12% !important;
+    width: min(24vmin, 110px);
+    height: min(24vmin, 110px);
+  }
+  .idle-motivator {
+    width: min(86%, 360px);
+    max-width: min(86%, 360px);
+    font-size: clamp(0.78rem, 2.8vmin, 0.98rem);
+  }
+}
+
 
 /* Mobile footer: keep fully on-screen (safe-area + dvh) */
 @media (max-width: 900px) and (orientation: portrait) {
