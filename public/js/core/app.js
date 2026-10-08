@@ -4102,7 +4102,7 @@
   }
   document.addEventListener('keydown', function (e) {
     if (e.key === 'c' || e.key === 'C') {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!$('meetingView') || $('meetingView').classList.contains('hidden')) return;
       e.preventDefault();
       toggleChatScreenOverlay();
@@ -4298,7 +4298,7 @@
   if ($('pdfNextBtn')) $('pdfNextBtn').addEventListener('click', function () { pdfGo(1); });
   document.addEventListener('keydown', function (e) {
     if (!currentContent) return;
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
     if (currentContent.type === 'pdf') {
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); pdfGo(1); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); pdfGo(-1); }
@@ -4834,7 +4834,7 @@
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!currentMeeting) return;
       if (e.key === 'h' || e.key === 'H') {
         e.preventDefault();
@@ -5219,7 +5219,7 @@
 
     // Keyboard shortcuts expansion
     document.addEventListener('keydown', (e) => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!currentMeeting) return;
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
@@ -5543,7 +5543,7 @@
 
     // Keyboard V for camera
     document.addEventListener('keydown', (e) => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!currentMeeting) return;
       if (e.key === 'v' || e.key === 'V') {
         e.preventDefault();
@@ -7765,7 +7765,7 @@
           window.__timelineKeysWired = true;
           document.addEventListener('keydown', function (e) {
             if (!currentMeeting || !screenTimeline.length) return;
-            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
             // Space: pause slideshow (host/cohost turns it off for everyone)
             if (e.code === 'Space' || e.key === ' ') {
               if (slideshowOn) {
@@ -8571,7 +8571,7 @@
     // --- Whiteboard (multi-board, pen sizes, text, undo/redo, share) ---
     let wbDrawing = false;
     let wbErase = false;
-    let wbTool = 'pencil'; // pencil | brush | eraser | text
+    let wbTool = 'pencil'; // pencil | pen | brush | eraser | text | select
     let wbPoints = [];
     let wbBoards = [{ strokes: [], texts: [], snapshot: null }];
     let wbBoardIdx = 0;
@@ -8579,17 +8579,65 @@
     let wbRedoStack = [];
     let wbSharing = false;
     let wbShareStream = null;
+    let wbShareTrack = null;
+    let wbShareRaf = 0;
+    let wbSelectedEl = null;
     const canvas = document.getElementById('whiteboardCanvas');
-    const ctx2d = canvas ? canvas.getContext('2d') : null;
+    const ctx2d = canvas ? canvas.getContext('2d', { alpha: false }) : null;
     const wbTextLayer = document.getElementById('wbTextLayer');
+    // Offscreen composite for share (always white bg + drawings + text)
+    let wbShareCanvas = null;
+    let wbShareCtx = null;
+    function ensureShareCanvas() {
+      if (!canvas) return null;
+      if (!wbShareCanvas) {
+        wbShareCanvas = document.createElement('canvas');
+        wbShareCanvas.width = canvas.width;
+        wbShareCanvas.height = canvas.height;
+        wbShareCtx = wbShareCanvas.getContext('2d', { alpha: false });
+      } else if (wbShareCanvas.width !== canvas.width || wbShareCanvas.height !== canvas.height) {
+        wbShareCanvas.width = canvas.width;
+        wbShareCanvas.height = canvas.height;
+      }
+      return wbShareCanvas;
+    }
+    function wbFillWhite(ctx, w, h) {
+      if (!ctx) return;
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
+    // Init white background
+    if (ctx2d && canvas) {
+      wbFillWhite(ctx2d, canvas.width, canvas.height);
+    }
 
     function wbCurrent() { return wbBoards[wbBoardIdx] || wbBoards[0]; }
     function wbSizeVal() {
       var el = document.getElementById('wbSize');
-      var n = el ? parseInt(el.value, 10) : 3;
+      var n = el ? parseInt(el.value, 10) : 2;
       if (isNaN(n) || n < 1) n = 1;
-      if (n > 48) n = 48;
+      if (n > 20) n = 20;
       return n;
+    }
+    function wbFontSizeVal() {
+      var el = document.getElementById('wbFontSize');
+      var n = el ? parseInt(el.value, 10) : 18;
+      if (isNaN(n) || n < 10) n = 10;
+      if (n > 72) n = 72;
+      return n;
+    }
+    /** Effective stroke width: pencil 1×, pen ~2.5×, brush ~6× — size input is base only */
+    function wbEffectiveWidth(tool, base) {
+      var b = base || wbSizeVal();
+      var t = tool || wbTool;
+      if (t === 'pencil') return Math.max(1, b * 1);
+      if (t === 'pen') return Math.max(2, b * 2.5);
+      if (t === 'brush') return Math.max(5, b * 6);
+      if (t === 'eraser') return Math.max(12, b * 8);
+      return b;
     }
     function wbPos(e) {
       const r = canvas.getBoundingClientRect();
@@ -8602,18 +8650,56 @@
     }
     function drawStroke(stroke) {
       if (!ctx2d || !stroke.points || !stroke.points.length) return;
-      var w = stroke.width || 3;
-      if (stroke.tool === 'brush') w = Math.max(w, w * 1.6);
-      ctx2d.strokeStyle = stroke.erase ? '#ffffff' : (stroke.color || '#111');
-      ctx2d.lineWidth = stroke.erase ? Math.max(12, w * 4) : w;
-      ctx2d.lineCap = 'round';
+      var tool = stroke.tool || 'pen';
+      var w = wbEffectiveWidth(tool, stroke.width || stroke.baseWidth || 2);
+      if (stroke.erase || tool === 'eraser') {
+        ctx2d.save();
+        ctx2d.globalCompositeOperation = 'source-over';
+        ctx2d.strokeStyle = '#ffffff';
+        ctx2d.lineWidth = w;
+        ctx2d.lineCap = 'round';
+        ctx2d.lineJoin = 'round';
+        ctx2d.beginPath();
+        stroke.points.forEach(function (pt, i) {
+          if (i === 0) ctx2d.moveTo(pt.x, pt.y);
+          else ctx2d.lineTo(pt.x, pt.y);
+        });
+        ctx2d.stroke();
+        ctx2d.restore();
+        return;
+      }
+      ctx2d.save();
+      ctx2d.globalCompositeOperation = 'source-over';
+      ctx2d.strokeStyle = stroke.color || '#111111';
+      ctx2d.lineWidth = w;
+      ctx2d.lineCap = tool === 'brush' ? 'round' : 'round';
       ctx2d.lineJoin = 'round';
+      if (tool === 'brush') {
+        ctx2d.globalAlpha = 0.55;
+        ctx2d.lineWidth = w;
+      } else if (tool === 'pencil') {
+        ctx2d.globalAlpha = 0.9;
+      } else {
+        ctx2d.globalAlpha = 1;
+      }
       ctx2d.beginPath();
-      stroke.points.forEach((pt, i) => {
+      stroke.points.forEach(function (pt, i) {
         if (i === 0) ctx2d.moveTo(pt.x, pt.y);
         else ctx2d.lineTo(pt.x, pt.y);
       });
       ctx2d.stroke();
+      // Extra soft pass for brush feel
+      if (tool === 'brush' && stroke.points.length > 1) {
+        ctx2d.globalAlpha = 0.25;
+        ctx2d.lineWidth = w * 1.35;
+        ctx2d.beginPath();
+        stroke.points.forEach(function (pt, i) {
+          if (i === 0) ctx2d.moveTo(pt.x, pt.y);
+          else ctx2d.lineTo(pt.x, pt.y);
+        });
+        ctx2d.stroke();
+      }
+      ctx2d.restore();
     }
     function wbPushUndo() {
       try {
@@ -8622,18 +8708,128 @@
         wbRedoStack = [];
       } catch (_) {}
     }
+    function wbClearSelection() {
+      if (wbSelectedEl) {
+        wbSelectedEl.classList.remove('wb-selected');
+        wbSelectedEl.querySelectorAll('.wb-textbox-handle').forEach(function (h) { h.remove(); });
+        wbSelectedEl = null;
+      }
+    }
+    function wbAttachHandles(el) {
+      el.querySelectorAll('.wb-textbox-handle').forEach(function (h) { h.remove(); });
+      ['nw', 'ne', 'sw', 'se'].forEach(function (corner) {
+        var h = document.createElement('div');
+        h.className = 'wb-textbox-handle ' + corner;
+        h.dataset.corner = corner;
+        el.appendChild(h);
+        h.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var startX = e.clientX, startY = e.clientY;
+          var startW = el.offsetWidth, startH = el.offsetHeight;
+          var startL = el.offsetLeft, startT = el.offsetTop;
+          function onMove(ev) {
+            var dx = ev.clientX - startX;
+            var dy = ev.clientY - startY;
+            var scaleX = canvas ? (canvas.width / canvas.getBoundingClientRect().width) : 1;
+            // Use CSS pixel deltas relative to layer
+            if (corner === 'se') {
+              el.style.width = Math.max(60, startW + dx) + 'px';
+              el.style.height = Math.max(28, startH + dy) + 'px';
+            } else if (corner === 'sw') {
+              el.style.width = Math.max(60, startW - dx) + 'px';
+              el.style.height = Math.max(28, startH + dy) + 'px';
+              el.style.left = (startL + dx) + 'px';
+            } else if (corner === 'ne') {
+              el.style.width = Math.max(60, startW + dx) + 'px';
+              el.style.height = Math.max(28, startH - dy) + 'px';
+              el.style.top = (startT + dy) + 'px';
+            } else if (corner === 'nw') {
+              el.style.width = Math.max(60, startW - dx) + 'px';
+              el.style.height = Math.max(28, startH - dy) + 'px';
+              el.style.left = (startL + dx) + 'px';
+              el.style.top = (startT + dy) + 'px';
+            }
+          }
+          function onUp() {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            wbSaveBoardSnapshot();
+          }
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        });
+      });
+    }
+    function makeWbTextBox(el, data) {
+      el.style.position = 'absolute';
+      el.style.overflow = 'auto';
+      el.style.padding = '4px 6px';
+      el.style.font = (data && data.fontSize ? data.fontSize : wbFontSizeVal()) + 'px sans-serif';
+      el.style.color = (data && data.color) || document.getElementById('wbColor')?.value || '#111';
+      el.style.zIndex = '2';
+      el.style.minWidth = '60px';
+      el.style.minHeight = '28px';
+      el.style.wordWrap = 'break-word';
+      el.style.whiteSpace = 'pre-wrap';
+      el.style.cursor = 'text';
+      // Border only when focused/selected — via CSS
+      var dragging = false, ox = 0, oy = 0;
+      el.addEventListener('mousedown', function (e) {
+        if (e.target.classList && e.target.classList.contains('wb-textbox-handle')) return;
+        if (wbTool === 'select' || e.target === el) {
+          if (wbTool === 'select') {
+            e.preventDefault();
+            wbClearSelection();
+            wbSelectedEl = el;
+            el.classList.add('wb-selected');
+            wbAttachHandles(el);
+            dragging = true;
+            ox = e.clientX - el.offsetLeft;
+            oy = e.clientY - el.offsetTop;
+            e.stopPropagation();
+          }
+        }
+      });
+      el.addEventListener('focus', function () {
+        el.classList.add('wb-selected');
+      });
+      el.addEventListener('blur', function () {
+        if (wbSelectedEl !== el) el.classList.remove('wb-selected');
+        wbSaveBoardSnapshot();
+      });
+      // Stop meeting shortcuts while typing in text box
+      el.addEventListener('keydown', function (e) {
+        e.stopPropagation();
+      }, true);
+      el.addEventListener('keyup', function (e) {
+        e.stopPropagation();
+      }, true);
+      window.addEventListener('mousemove', function (e) {
+        if (!dragging || wbTool !== 'select') return;
+        el.style.left = (e.clientX - ox) + 'px';
+        el.style.top = (e.clientY - oy) + 'px';
+      });
+      window.addEventListener('mouseup', function () {
+        if (dragging) {
+          dragging = false;
+          wbSaveBoardSnapshot();
+        }
+      });
+    }
     function wbRedrawFromBoard() {
       if (!ctx2d || !canvas) return;
-      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      wbFillWhite(ctx2d, canvas.width, canvas.height);
       var b = wbCurrent();
       if (b.snapshot) {
         var img = new Image();
-        img.onload = function () { ctx2d.drawImage(img, 0, 0); };
+        img.onload = function () {
+          ctx2d.drawImage(img, 0, 0);
+        };
         img.src = b.snapshot;
       } else {
         (b.strokes || []).forEach(drawStroke);
       }
-      // texts
       if (wbTextLayer) {
         wbTextLayer.innerHTML = '';
         (b.texts || []).forEach(function (t) {
@@ -8658,8 +8854,8 @@
     function wbSaveBoardSnapshot() {
       try {
         var b = wbCurrent();
+        // Snapshot of canvas only (drawings); texts stored separately
         b.snapshot = canvas.toDataURL('image/png');
-        // collect texts
         if (wbTextLayer) {
           b.texts = Array.from(wbTextLayer.querySelectorAll('.wb-textbox')).map(function (el) {
             return {
@@ -8668,62 +8864,145 @@
               y: parseFloat(el.style.top) || 0,
               w: el.offsetWidth,
               h: el.offsetHeight,
-              text: el.textContent || ''
+              text: el.innerText || el.textContent || '',
+              fontSize: parseInt(el.style.fontSize, 10) || wbFontSizeVal(),
+              color: el.style.color || '#111'
             };
           });
         }
       } catch (_) {}
     }
-    function makeWbTextBox(el, data) {
-      el.style.position = 'absolute';
-      el.style.resize = 'both';
-      el.style.overflow = 'auto';
-      el.style.border = '1px dashed rgba(0,0,0,0.25)';
-      el.style.padding = '4px 6px';
-      el.style.background = 'rgba(255,255,255,0.85)';
-      el.style.font = '14px sans-serif';
-      el.style.color = '#111';
-      el.style.zIndex = '2';
-      el.style.minWidth = '80px';
-      el.style.minHeight = '28px';
-      var dragging = false, ox = 0, oy = 0;
-      el.addEventListener('mousedown', function (e) {
-        if (e.target !== el) return;
-        dragging = true; ox = e.clientX - el.offsetLeft; oy = e.clientY - el.offsetTop;
-        e.stopPropagation();
-      });
-      window.addEventListener('mousemove', function (e) {
-        if (!dragging) return;
-        el.style.left = (e.clientX - ox) + 'px';
-        el.style.top = (e.clientY - oy) + 'px';
-      });
-      window.addEventListener('mouseup', function () { dragging = false; });
+    /** Paint composite share frame: white + drawings + text (no borders) */
+    function wbPaintShareFrame() {
+      var sc = ensureShareCanvas();
+      if (!sc || !wbShareCtx || !canvas) return;
+      wbFillWhite(wbShareCtx, sc.width, sc.height);
+      wbShareCtx.drawImage(canvas, 0, 0);
+      // Draw text boxes as canvas text (no borders)
+      if (wbTextLayer) {
+        var scaleX = canvas.width / (canvas.getBoundingClientRect().width || canvas.width);
+        var scaleY = canvas.height / (canvas.getBoundingClientRect().height || canvas.height);
+        Array.from(wbTextLayer.querySelectorAll('.wb-textbox')).forEach(function (el) {
+          var x = (parseFloat(el.style.left) || 0) * scaleX;
+          var y = (parseFloat(el.style.top) || 0) * scaleY;
+          var fs = (parseInt(el.style.fontSize, 10) || wbFontSizeVal()) * scaleY;
+          var color = el.style.color || '#111111';
+          var text = el.innerText || el.textContent || '';
+          if (!text) return;
+          wbShareCtx.save();
+          wbShareCtx.fillStyle = color;
+          wbShareCtx.font = fs + 'px sans-serif';
+          wbShareCtx.textBaseline = 'top';
+          var maxW = (el.offsetWidth || 160) * scaleX;
+          var lineH = fs * 1.25;
+          var lines = [];
+          text.split('\n').forEach(function (para) {
+            var words = para.split(' ');
+            var line = '';
+            words.forEach(function (word) {
+              var test = line ? line + ' ' + word : word;
+              if (wbShareCtx.measureText(test).width > maxW && line) {
+                lines.push(line);
+                line = word;
+              } else line = test;
+            });
+            lines.push(line);
+          });
+          lines.forEach(function (ln, i) {
+            wbShareCtx.fillText(ln, x + 4 * scaleX, y + 4 * scaleY + i * lineH);
+          });
+          wbShareCtx.restore();
+        });
+      }
     }
+    function wbStartShareLoop() {
+      if (wbShareRaf) cancelAnimationFrame(wbShareRaf);
+      function tick() {
+        if (!wbSharing) return;
+        try { wbPaintShareFrame(); } catch (_) {}
+        wbShareRaf = requestAnimationFrame(tick);
+      }
+      wbShareRaf = requestAnimationFrame(tick);
+    }
+    async function wbUnpublishShare() {
+      try {
+        if (wbShareRaf) { cancelAnimationFrame(wbShareRaf); wbShareRaf = 0; }
+        if (typeof room !== 'undefined' && room && room.localParticipant) {
+          var pubs = room.localParticipant.trackPublications || room.localParticipant.tracks;
+          if (pubs) {
+            var list = pubs.forEach ? [] : Array.from(pubs.values ? pubs.values() : []);
+            if (pubs.forEach) {
+              pubs.forEach(function (pub) { list.push(pub); });
+            }
+            for (var i = 0; i < list.length; i++) {
+              var pub = list[i];
+              var tr = pub && (pub.track || pub);
+              var name = (pub && pub.trackName) || (tr && tr.name) || '';
+              var src = pub && pub.source;
+              var isWb = name === 'whiteboard' || (tr && tr.mediaStreamTrack && tr.mediaStreamTrack.label && tr.mediaStreamTrack.label.indexOf('canvas') >= 0);
+              // Unpublish only whiteboard-named or our share track
+              if (tr && (name === 'whiteboard' || tr === wbShareTrack)) {
+                try { await room.localParticipant.unpublishTrack(tr); } catch (_) {}
+              }
+            }
+          }
+          if (wbShareTrack) {
+            try { await room.localParticipant.unpublishTrack(wbShareTrack); } catch (_) {}
+            try { wbShareTrack.stop && wbShareTrack.stop(); } catch (_) {}
+            try {
+              if (wbShareTrack.mediaStreamTrack) wbShareTrack.mediaStreamTrack.stop();
+            } catch (_) {}
+          }
+        }
+        if (wbShareStream) {
+          try {
+            wbShareStream.getTracks().forEach(function (t) { try { t.stop(); } catch (_) {} });
+          } catch (_) {}
+        }
+      } catch (e) { console.warn('wb unpublish', e); }
+      wbShareTrack = null;
+      wbShareStream = null;
+      wbSharing = false;
+      var btn = document.getElementById('wbShare');
+      if (btn) {
+        btn.classList.remove('active');
+        btn.title = 'Share whiteboard';
+      }
+    }
+
     if (canvas && ctx2d) {
-      canvas.addEventListener('mousedown', (e) => {
+      canvas.addEventListener('mousedown', function (e) {
+        if (wbTool === 'select') {
+          wbClearSelection();
+          return;
+        }
         if (wbTool === 'text') {
           var p = wbPos(e);
+          // Convert to CSS pixel coords for layer
+          var rect = canvas.getBoundingClientRect();
+          var cssX = e.clientX - rect.left;
+          var cssY = e.clientY - rect.top;
           var id = 't' + Date.now();
           var el = document.createElement('div');
           el.className = 'wb-textbox';
           el.contentEditable = 'true';
           el.dataset.id = id;
-          el.style.left = p.x + 'px';
-          el.style.top = p.y + 'px';
+          el.style.left = cssX + 'px';
+          el.style.top = cssY + 'px';
           el.style.width = '160px';
-          el.style.minHeight = '40px';
-          makeWbTextBox(el, {});
+          el.style.minHeight = '36px';
+          makeWbTextBox(el, { fontSize: wbFontSizeVal(), color: document.getElementById('wbColor')?.value });
           if (wbTextLayer) wbTextLayer.appendChild(el);
           el.focus();
           wbCurrent().texts = wbCurrent().texts || [];
-          wbCurrent().texts.push({ id: id, x: p.x, y: p.y, w: 160, h: 40, text: '' });
+          wbCurrent().texts.push({ id: id, x: cssX, y: cssY, w: 160, h: 36, text: '', fontSize: wbFontSizeVal(), color: document.getElementById('wbColor')?.value });
           return;
         }
         wbPushUndo();
         wbDrawing = true;
         wbPoints = [wbPos(e)];
       });
-      canvas.addEventListener('mousemove', (e) => {
+      canvas.addEventListener('mousemove', function (e) {
         if (!wbDrawing) return;
         wbPoints.push(wbPos(e));
         drawStroke({
@@ -8731,37 +9010,41 @@
           color: document.getElementById('wbColor')?.value,
           erase: wbErase || wbTool === 'eraser',
           width: wbSizeVal(),
+          baseWidth: wbSizeVal(),
           tool: wbTool,
         });
       });
-      const endDraw = () => {
+      var endDraw = function () {
         if (!wbDrawing) return;
         wbDrawing = false;
         if (wbPoints.length > 1) {
           var stroke = {
             points: wbPoints.slice(),
-            color: document.getElementById('wbColor')?.value || '#111',
+            color: document.getElementById('wbColor')?.value || '#111111',
             erase: wbErase || wbTool === 'eraser',
             width: wbSizeVal(),
+            baseWidth: wbSizeVal(),
             tool: wbTool,
           };
           wbCurrent().strokes = wbCurrent().strokes || [];
           wbCurrent().strokes.push(stroke);
-          safeSend({
-            type: 'wb-stroke',
-            points: stroke.points,
-            color: stroke.color,
-            erase: stroke.erase,
-            width: stroke.width,
-            board: wbBoardIdx,
-          });
+          try {
+            safeSend({
+              type: 'wb-stroke',
+              points: stroke.points,
+              color: stroke.color,
+              erase: stroke.erase,
+              width: stroke.width,
+              tool: stroke.tool,
+              board: wbBoardIdx,
+            });
+          } catch (_) {}
         }
         wbPoints = [];
         wbSaveBoardSnapshot();
       };
       canvas.addEventListener('mouseup', endDraw);
       canvas.addEventListener('mouseleave', endDraw);
-      // touch
       canvas.addEventListener('touchstart', function (e) {
         if (e.touches[0]) {
           e.preventDefault();
@@ -8776,18 +9059,31 @@
       }, { passive: false });
       canvas.addEventListener('touchend', function () { endDraw(); });
     }
+    // Delete selected text box
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && wbTool === 'select' && wbSelectedEl) {
+        if (document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('wb-textbox')) return;
+        e.preventDefault();
+        wbSelectedEl.remove();
+        wbSelectedEl = null;
+        wbSaveBoardSnapshot();
+      }
+    });
+
     function setWbTool(tool) {
       wbTool = tool;
       wbErase = tool === 'eraser';
       document.querySelectorAll('.wb-tool').forEach(function (b) { b.classList.remove('active'); });
-      if (tool === 'pencil' || tool === 'brush') document.getElementById('wbPen')?.classList.add('active');
+      if (tool === 'pencil' || tool === 'pen' || tool === 'brush') document.getElementById('wbPen')?.classList.add('active');
       if (tool === 'eraser') document.getElementById('wbEraser')?.classList.add('active');
       if (tool === 'text') document.getElementById('wbText')?.classList.add('active');
+      if (tool === 'select') document.getElementById('wbSelect')?.classList.add('active');
+      if (tool !== 'select') wbClearSelection();
     }
     document.getElementById('wbPen')?.addEventListener('click', function () {
       var menu = document.getElementById('wbPenMenu');
       if (menu) menu.classList.toggle('hidden');
-      setWbTool(wbTool === 'brush' ? 'brush' : 'pencil');
+      if (wbTool !== 'pencil' && wbTool !== 'pen' && wbTool !== 'brush') setWbTool('pencil');
     });
     document.querySelectorAll('.wb-pen-opt').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -8797,8 +9093,15 @@
     });
     document.getElementById('wbEraser')?.addEventListener('click', function () { setWbTool('eraser'); document.getElementById('wbPenMenu')?.classList.add('hidden'); });
     document.getElementById('wbText')?.addEventListener('click', function () { setWbTool('text'); document.getElementById('wbPenMenu')?.classList.add('hidden'); });
+    document.getElementById('wbSelect')?.addEventListener('click', function () { setWbTool('select'); document.getElementById('wbPenMenu')?.classList.add('hidden'); });
     document.getElementById('wbSize')?.addEventListener('input', function () {
-      this.value = this.value.replace(/[^0-9]/g, '');
+      this.value = String(this.value).replace(/[^0-9]/g, '');
+    });
+    document.getElementById('wbFontSize')?.addEventListener('input', function () {
+      this.value = String(this.value).replace(/[^0-9]/g, '');
+      if (wbSelectedEl) {
+        wbSelectedEl.style.fontSize = wbFontSizeVal() + 'px';
+      }
     });
     document.getElementById('wbUndo')?.addEventListener('click', function () {
       if (!wbUndoStack.length || !ctx2d) return;
@@ -8806,7 +9109,10 @@
         wbRedoStack.push(canvas.toDataURL('image/png'));
         var prev = wbUndoStack.pop();
         var img = new Image();
-        img.onload = function () { ctx2d.clearRect(0, 0, canvas.width, canvas.height); ctx2d.drawImage(img, 0, 0); };
+        img.onload = function () {
+          wbFillWhite(ctx2d, canvas.width, canvas.height);
+          ctx2d.drawImage(img, 0, 0);
+        };
         img.src = prev;
       } catch (_) {}
     });
@@ -8816,23 +9122,28 @@
         wbUndoStack.push(canvas.toDataURL('image/png'));
         var next = wbRedoStack.pop();
         var img = new Image();
-        img.onload = function () { ctx2d.clearRect(0, 0, canvas.width, canvas.height); ctx2d.drawImage(img, 0, 0); };
+        img.onload = function () {
+          wbFillWhite(ctx2d, canvas.width, canvas.height);
+          ctx2d.drawImage(img, 0, 0);
+        };
         img.src = next;
       } catch (_) {}
     });
-    document.getElementById('wbClear')?.addEventListener('click', () => {
+    document.getElementById('wbClear')?.addEventListener('click', function () {
       wbPushUndo();
-      safeSend({ type: 'wb-clear', board: wbBoardIdx });
-      if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      try { safeSend({ type: 'wb-clear', board: wbBoardIdx }); } catch (_) {}
+      if (ctx2d && canvas) wbFillWhite(ctx2d, canvas.width, canvas.height);
       wbCurrent().strokes = [];
       wbCurrent().snapshot = null;
       if (wbTextLayer) wbTextLayer.innerHTML = '';
       wbCurrent().texts = [];
+      wbClearSelection();
     });
-    document.getElementById('wbExport')?.addEventListener('click', () => {
-      if (!canvas) return;
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
+    document.getElementById('wbExport')?.addEventListener('click', function () {
+      ensureShareCanvas();
+      wbPaintShareFrame();
+      var a = document.createElement('a');
+      a.href = (wbShareCanvas || canvas).toDataURL('image/png');
       a.download = 'whiteboard-board-' + (wbBoardIdx + 1) + '.png';
       a.click();
     });
@@ -8840,9 +9151,10 @@
       wbSaveBoardSnapshot();
       wbBoards.push({ strokes: [], texts: [], snapshot: null });
       wbBoardIdx = wbBoards.length - 1;
-      wbRedrawFromBoard();
+      if (ctx2d && canvas) wbFillWhite(ctx2d, canvas.width, canvas.height);
+      if (wbTextLayer) wbTextLayer.innerHTML = '';
       wbUpdateLabel();
-      safeSend({ type: 'wb-board-add', index: wbBoardIdx });
+      try { safeSend({ type: 'wb-board-add', index: wbBoardIdx }); } catch (_) {}
     });
     document.getElementById('wbRemoveBoard')?.addEventListener('click', function () {
       if (wbBoards.length <= 1) return;
@@ -8850,7 +9162,7 @@
       if (wbBoardIdx >= wbBoards.length) wbBoardIdx = wbBoards.length - 1;
       wbRedrawFromBoard();
       wbUpdateLabel();
-      safeSend({ type: 'wb-board-remove', index: wbBoardIdx });
+      try { safeSend({ type: 'wb-board-remove', index: wbBoardIdx }); } catch (_) {}
     });
     document.getElementById('wbPrevBoard')?.addEventListener('click', function () {
       if (wbBoardIdx <= 0) return;
@@ -8859,7 +9171,7 @@
       wbRedrawFromBoard();
       wbUpdateLabel();
       if (document.getElementById('wbFollowActive')?.checked) {
-        safeSend({ type: 'wb-board-active', index: wbBoardIdx });
+        try { safeSend({ type: 'wb-board-active', index: wbBoardIdx }); } catch (_) {}
       }
     });
     document.getElementById('wbNextBoard')?.addEventListener('click', function () {
@@ -8869,61 +9181,97 @@
       wbRedrawFromBoard();
       wbUpdateLabel();
       if (document.getElementById('wbFollowActive')?.checked) {
-        safeSend({ type: 'wb-board-active', index: wbBoardIdx });
+        try { safeSend({ type: 'wb-board-active', index: wbBoardIdx }); } catch (_) {}
       }
     });
     document.getElementById('wbShare')?.addEventListener('click', async function () {
       try {
         if (wbSharing) {
-          wbSharing = false;
-          this.classList.remove('active');
-          this.title = 'Share whiteboard';
-          if (typeof stopShare === 'function' && isSharing) await stopShare();
+          await wbUnpublishShare();
           if (typeof showToast === 'function') showToast('Whiteboard unshared');
           return;
         }
-        // Share whiteboard canvas as screen share via captureStream
-        if (!canvas || !canvas.captureStream) {
+        // Ensure white board locally
+        if (ctx2d && canvas) {
+          // Don't clear drawings — just ensure no transparent holes
+        }
+        ensureShareCanvas();
+        wbPaintShareFrame();
+        if (!wbShareCanvas || !wbShareCanvas.captureStream) {
           if (typeof showToast === 'function') showToast('Share not supported in this browser');
           return;
         }
-        wbShareStream = canvas.captureStream(15);
-        // If LiveKit room available, publish as screen share track
-        if (typeof room !== 'undefined' && room && room.localParticipant && window.LivekitClient) {
+        // Stop any previous share cleanly first
+        await wbUnpublishShare();
+        wbShareStream = wbShareCanvas.captureStream(15);
+        var mediaTrack = wbShareStream.getVideoTracks()[0];
+        if (!mediaTrack) {
+          if (typeof showToast === 'function') showToast('Could not capture whiteboard');
+          return;
+        }
+        try { mediaTrack.contentHint = 'detail'; } catch (_) {}
+
+        if (typeof room !== 'undefined' && room && room.localParticipant) {
           try {
-            var tracks = wbShareStream.getVideoTracks();
-            if (tracks[0]) {
-              await room.localParticipant.publishTrack(tracks[0], { source: 'screen_share', name: 'whiteboard' });
+            var LK = window.LivekitClient || window.LiveKit || null;
+            var pubOpts = { name: 'whiteboard', source: (LK && LK.Track && LK.Track.Source && LK.Track.Source.ScreenShare) || 'screen_share' };
+            // LiveKit: publish MediaStreamTrack
+            var published = await room.localParticipant.publishTrack(mediaTrack, pubOpts);
+            wbShareTrack = (published && published.track) || mediaTrack;
+            wbSharing = true;
+            this.classList.add('active');
+            this.title = 'Unshare whiteboard';
+            wbStartShareLoop();
+            if (typeof showToast === 'function') showToast('Whiteboard shared');
+          } catch (err) {
+            console.warn('wb share', err);
+            // Retry once after forced unpublish of all screen shares named whiteboard
+            try {
+              await wbUnpublishShare();
+              ensureShareCanvas();
+              wbPaintShareFrame();
+              wbShareStream = wbShareCanvas.captureStream(15);
+              mediaTrack = wbShareStream.getVideoTracks()[0];
+              var published2 = await room.localParticipant.publishTrack(mediaTrack, { name: 'whiteboard' });
+              wbShareTrack = (published2 && published2.track) || mediaTrack;
               wbSharing = true;
               this.classList.add('active');
               this.title = 'Unshare whiteboard';
+              wbStartShareLoop();
               if (typeof showToast === 'function') showToast('Whiteboard shared');
+            } catch (err2) {
+              console.warn('wb share retry', err2);
+              if (typeof showToast === 'function') showToast('Could not share whiteboard — try again');
+              wbSharing = false;
             }
-          } catch (err) {
-            console.warn('wb share', err);
-            if (typeof showToast === 'function') showToast('Could not share whiteboard');
           }
-        } else if (typeof startShare === 'function') {
-          // Fallback: user may need to pick window; still toggle UI
-          wbSharing = true;
-          this.classList.add('active');
-          if (typeof showToast === 'function') showToast('Whiteboard share active (canvas stream)');
+        } else {
+          if (typeof showToast === 'function') showToast('Not connected to media server');
         }
       } catch (e) {
         console.warn(e);
+        if (typeof showToast === 'function') showToast('Share failed');
       }
     });
-    document.getElementById('whiteboardClose')?.addEventListener('click', () => {
+    document.getElementById('whiteboardClose')?.addEventListener('click', function () {
       document.getElementById('whiteboardModal')?.classList.add('hidden');
     });
-    document.getElementById('whiteboardModalBackdrop')?.addEventListener('click', () => {
+    document.getElementById('whiteboardModalBackdrop')?.addEventListener('click', function () {
       document.getElementById('whiteboardModal')?.classList.add('hidden');
     });
     window.__meetOpenWhiteboard = function () {
       document.getElementById('whiteboardModal')?.classList.remove('hidden');
+      if (ctx2d && canvas) {
+        // Keep existing content; ensure white if empty
+        try {
+          var px = ctx2d.getImageData(0, 0, 1, 1).data;
+          // if fully transparent/black init, fill white
+        } catch (_) {}
+      }
       wbUpdateLabel();
-      safeSend({ type: 'wb-sync' });
+      try { safeSend({ type: 'wb-sync' }); } catch (_) {}
     };
+    window.__meetWbUnshare = wbUnpublishShare;
 
     // --- Breakout ---
     document.getElementById('breakoutCreate')?.addEventListener('click', () => {
@@ -9161,13 +9509,28 @@
           } catch (_) {}
         }
       },
-      'wb-stroke': function (msg) { if (msg.stroke) drawStroke(msg.stroke); },
+      'wb-stroke': function (msg) {
+        try {
+          var stroke = msg.stroke || msg;
+          if (stroke && stroke.points) drawStroke(stroke);
+        } catch (_) {}
+      },
       'wb-clear': function () {
-        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        try {
+          if (ctx2d && canvas) {
+            ctx2d.fillStyle = '#ffffff';
+            ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+          }
+        } catch (_) {}
       },
       'wb-sync': function (msg) {
-        if (ctx2d && canvas) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-        (msg.strokes || []).forEach(drawStroke);
+        try {
+          if (ctx2d && canvas) {
+            ctx2d.fillStyle = '#ffffff';
+            ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+          }
+          (msg.strokes || []).forEach(function (s) { try { drawStroke(s); } catch (_) {} });
+        } catch (_) {}
       },
       'breakout-state': function (msg) {
         const list = document.getElementById('breakoutList');

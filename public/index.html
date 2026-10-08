@@ -1276,14 +1276,17 @@
           <div class="wb-tool-group wb-pen-group">
             <button type="button" class="btn icon-btn wb-tool active" id="wbPen" title="Pen" aria-label="Pen"><i class="fa-solid fa-pen"></i></button>
             <div class="wb-pen-menu hidden" id="wbPenMenu">
-              <button type="button" class="btn small-btn wb-pen-opt" data-tool="pencil" title="Pencil"><i class="fa-solid fa-pencil"></i> Pencil</button>
-              <button type="button" class="btn small-btn wb-pen-opt" data-tool="brush" title="Brush"><i class="fa-solid fa-paintbrush"></i> Brush</button>
+              <button type="button" class="btn small-btn wb-pen-opt" data-tool="pencil" title="Pencil (1×)"><i class="fa-solid fa-pencil"></i> Pencil</button>
+              <button type="button" class="btn small-btn wb-pen-opt" data-tool="pen" title="Pen (2–3×)"><i class="fa-solid fa-pen"></i> Pen</button>
+              <button type="button" class="btn small-btn wb-pen-opt" data-tool="brush" title="Brush (5×+)"><i class="fa-solid fa-paintbrush"></i> Brush</button>
             </div>
           </div>
-          <input type="number" id="wbSize" class="wb-size-input" min="1" max="48" value="3" title="Stroke size" aria-label="Stroke size" inputmode="numeric">
+          <input type="number" id="wbSize" class="wb-size-input" min="1" max="20" value="2" title="Base size (tool multiplies)" aria-label="Base stroke size" inputmode="numeric">
           <input type="color" id="wbColor" value="#111111" title="Color">
           <button type="button" class="btn icon-btn wb-tool" id="wbEraser" title="Eraser" aria-label="Eraser"><i class="fa-solid fa-eraser"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbText" title="Text box" aria-label="Text box"><i class="fa-solid fa-font"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbSelect" title="Select / move / delete" aria-label="Select"><i class="fa-solid fa-arrow-pointer"></i></button>
+          <input type="number" id="wbFontSize" class="wb-size-input" min="10" max="72" value="18" title="Text font size" aria-label="Text font size" inputmode="numeric">
           <button type="button" class="btn icon-btn wb-tool" id="wbUndo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbRedo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbClear" title="Clear" aria-label="Clear"><i class="fa-solid fa-trash"></i></button>
