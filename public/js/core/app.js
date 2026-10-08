@@ -330,13 +330,10 @@
     document.querySelectorAll('.more-in-call').forEach((el) => {
       el.classList.toggle('hidden', !inCall);
     });
-    const isHost = !!(currentMeeting && (
-      currentMeeting.isHost ||
-      myRole === 'host' ||
-      myRole === 'cohost'
-    ));
+    // End-for-everyone is host-only (not cohost)
+    const isMeetingHost = !!(currentMeeting && (myRole === 'host' || (currentMeeting.isHost && myRole !== 'cohost' && myRole !== 'participant' && myRole !== 'guest')));
     document.querySelectorAll('.more-end').forEach((el) => {
-      el.classList.toggle('hidden', !inCall || !isHost);
+      el.classList.toggle('hidden', !inCall || !isMeetingHost);
     });
   }
 
@@ -2726,6 +2723,9 @@
 
   async function leaveMeeting() {
     try {
+      if (typeof window.__meetWbAutoSave === 'function') window.__meetWbAutoSave();
+    } catch (_) {}
+    try {
       if (typeof window.__meetFlushRecordingOnLeave === 'function') window.__meetFlushRecordingOnLeave();
     } catch (_) {}
     if (currentMeeting) {
@@ -4205,11 +4205,11 @@
       nameTop.classList.toggle('hidden', !currentMeeting);
     }
     var myId = currentMeeting && currentMeeting.participantId;
-    var isHost = !!(currentMeeting && currentMeeting.isHost) || !!(participants.find(function (p) { return p.id === myId; }) || {}).isHost;
+    var isMeetingHost = (myRole === 'host') || !!(currentMeeting && currentMeeting.isHost && myRole !== 'cohost' && myRole !== 'participant' && myRole !== 'guest');
     var endBtn = $('endMeetBtn');
     var endTop = $('endMeetBtnTop');
-    if (endBtn) endBtn.classList.toggle('hidden', !isHost);
-    if (endTop) endTop.classList.toggle('hidden', !isHost || !currentMeeting);
+    if (endBtn) endBtn.classList.toggle('hidden', !isMeetingHost);
+    if (endTop) endTop.classList.toggle('hidden', !isMeetingHost || !currentMeeting);
     var shareTop = $('shareLinkBtnTop');
     if (shareTop) shareTop.classList.toggle('hidden', !currentMeeting);
     if (typeof syncMoreMenuInCall === 'function') syncMoreMenuInCall();
@@ -4222,7 +4222,12 @@
     catch (e) { prompt('Copy invite link:', url); }
   }
   function endMeetingConfirm() {
+    if (!(myRole === 'host' || (currentMeeting && currentMeeting.isHost && myRole !== 'cohost' && myRole !== 'participant' && myRole !== 'guest'))) {
+      if (typeof showToast === 'function') showToast('Only the host can end the meeting for everyone');
+      return;
+    }
     if (!confirm('End the meeting for everyone?')) return;
+    try { if (typeof window.__meetWbAutoSave === 'function') window.__meetWbAutoSave(); } catch (_) {}
     sendWS({ type: 'end-meeting' });
   }
 
@@ -7523,7 +7528,7 @@
         addItem('Leave call', 'fa-right-from-bracket', function () {
           document.getElementById('leaveBtn')?.click() || document.querySelector('#moreMenu [data-action="leave"]')?.click();
         });
-        if (currentMeeting.isHost || myRole === 'host' || myRole === 'cohost') {
+        if (myRole === 'host' || (currentMeeting && currentMeeting.isHost && myRole !== 'cohost')) {
           addItem('End for everyone', 'fa-phone-slash', function () {
             document.querySelector('#moreMenu [data-action="end-meeting"]')?.click()
               || document.getElementById('endMeetBtn')?.click();
@@ -8817,17 +8822,26 @@
     }
     function makeWbTextBox(el, data) {
       el.style.position = 'absolute';
-      el.style.overflow = 'auto';
+      el.style.overflow = 'hidden';
+      el.style.resize = 'none';
       el.style.padding = '4px 6px';
       el.style.font = (data && data.fontSize ? data.fontSize : wbFontSizeVal()) + 'px sans-serif';
       el.style.color = (data && data.color) || document.getElementById('wbColor')?.value || '#111';
+      if (data && data.fontWeight) el.style.fontWeight = data.fontWeight;
+      if (data && data.fontStyle) el.style.fontStyle = data.fontStyle;
+      if (data && data.textDecoration) el.style.textDecoration = data.textDecoration;
+      if (data && data.html) {
+        try { el.innerHTML = data.html; } catch (_) { el.textContent = data.text || ''; }
+      } else if (data && data.text != null && !el.innerHTML) {
+        el.textContent = data.text;
+      }
       el.style.zIndex = '2';
       el.style.minWidth = '60px';
       el.style.minHeight = '28px';
       el.style.wordWrap = 'break-word';
       el.style.whiteSpace = 'pre-wrap';
       el.style.cursor = 'text';
-      // Border only when focused/selected — via CSS
+      // Border only when focused/selected — via CSS; no native resize arrows
       var dragging = false, ox = 0, oy = 0;
       el.addEventListener('mousedown', function (e) {
         if (e.target.classList && e.target.classList.contains('wb-textbox-handle')) return;
@@ -8894,8 +8908,13 @@
           el.style.top = t.y + 'px';
           el.style.width = (t.w || 160) + 'px';
           el.style.minHeight = (t.h || 40) + 'px';
-          el.textContent = t.text || '';
           el.dataset.id = t.id;
+          // Prefer HTML (bold/italic) when present; plain text otherwise
+          if (t.html) {
+            try { el.innerHTML = t.html; } catch (_) { el.textContent = t.text || ''; }
+          } else {
+            el.textContent = t.text || '';
+          }
           makeWbTextBox(el, t);
           wbTextLayer.appendChild(el);
         });
@@ -8919,8 +8938,12 @@
               w: el.offsetWidth,
               h: el.offsetHeight,
               text: el.innerText || el.textContent || '',
+              html: el.innerHTML || '',
               fontSize: parseInt(el.style.fontSize, 10) || wbFontSizeVal(),
-              color: el.style.color || '#111'
+              color: el.style.color || '#111',
+              fontWeight: el.style.fontWeight || '',
+              fontStyle: el.style.fontStyle || '',
+              textDecoration: el.style.textDecoration || ''
             };
           });
         }
@@ -8943,30 +8966,72 @@
           var y = (parseFloat(el.style.top) || 0) * scaleY;
           var fs = (parseInt(el.style.fontSize, 10) || wbFontSizeVal()) * scaleY;
           var color = el.style.color || '#111111';
-          var text = el.innerText || el.textContent || '';
-          if (!text) return;
-          wbShareCtx.save();
-          wbShareCtx.fillStyle = color;
-          wbShareCtx.font = fs + 'px sans-serif';
-          wbShareCtx.textBaseline = 'top';
           var maxW = (el.offsetWidth || 160) * scaleX;
           var lineH = fs * 1.25;
-          var lines = [];
-          text.split('\n').forEach(function (para) {
-            var words = para.split(' ');
-            var line = '';
-            words.forEach(function (word) {
-              var test = line ? line + ' ' + word : word;
-              if (wbShareCtx.measureText(test).width > maxW && line) {
-                lines.push(line);
-                line = word;
-              } else line = test;
-            });
-            lines.push(line);
-          });
-          lines.forEach(function (ln, i) {
-            wbShareCtx.fillText(ln, x + 4 * scaleX, y + 4 * scaleY + i * lineH);
-          });
+          var baseX = x + 4 * scaleX;
+          var baseY = y + 4 * scaleY;
+          // Walk DOM so bold/italic/underline survive on the shared stream
+          function fontFor(node, parentBold, parentItalic) {
+            var tag = (node.nodeName || '').toLowerCase();
+            var bold = parentBold || tag === 'b' || tag === 'strong' || (node.style && /bold|700|800|900/.test(node.style.fontWeight || ''));
+            var italic = parentItalic || tag === 'i' || tag === 'em' || (node.style && node.style.fontStyle === 'italic');
+            var parts = [];
+            if (italic) parts.push('italic');
+            if (bold) parts.push('bold');
+            parts.push(fs + 'px sans-serif');
+            return { font: parts.join(' '), bold: bold, italic: italic, underline: tag === 'u' || (node.style && /underline/.test(node.style.textDecoration || '')) };
+          }
+          function drawRuns(node, cx, cy, parentBold, parentItalic) {
+            if (!node) return { x: cx, y: cy };
+            if (node.nodeType === 3) {
+              var raw = node.nodeValue || '';
+              var f = fontFor(node.parentNode || el, parentBold, parentItalic);
+              wbShareCtx.font = f.font;
+              wbShareCtx.fillStyle = color;
+              wbShareCtx.textBaseline = 'top';
+              var parts = raw.split(/(\n)/);
+              parts.forEach(function (part) {
+                if (part === '\n') {
+                  cx = baseX;
+                  cy += lineH;
+                  return;
+                }
+                var words = part.split(/(\s+)/);
+                words.forEach(function (w) {
+                  if (!w) return;
+                  var tw = wbShareCtx.measureText(w).width;
+                  if (cx + tw > baseX + maxW && cx > baseX && !/^\s+$/.test(w)) {
+                    cx = baseX;
+                    cy += lineH;
+                  }
+                  wbShareCtx.fillText(w, cx, cy);
+                  if (f.underline) {
+                    wbShareCtx.strokeStyle = color;
+                    wbShareCtx.lineWidth = Math.max(1, fs * 0.06);
+                    wbShareCtx.beginPath();
+                    wbShareCtx.moveTo(cx, cy + fs * 1.05);
+                    wbShareCtx.lineTo(cx + tw, cy + fs * 1.05);
+                    wbShareCtx.stroke();
+                  }
+                  cx += tw;
+                });
+              });
+              return { x: cx, y: cy };
+            }
+            if (node.nodeType === 1) {
+              var f2 = fontFor(node, parentBold, parentItalic);
+              var child = node.firstChild;
+              var pos = { x: cx, y: cy };
+              while (child) {
+                pos = drawRuns(child, pos.x, pos.y, f2.bold, f2.italic);
+                child = child.nextSibling;
+              }
+              return pos;
+            }
+            return { x: cx, y: cy };
+          }
+          wbShareCtx.save();
+          drawRuns(el, baseX, baseY, /bold|700/.test(el.style.fontWeight || ''), el.style.fontStyle === 'italic');
           wbShareCtx.restore();
         });
       }
@@ -9206,14 +9271,100 @@
       wbCurrent().texts = [];
       wbClearSelection();
     });
-    document.getElementById('wbExport')?.addEventListener('click', function () {
-      ensureShareCanvas();
-      wbPaintShareFrame();
+    /** Serialize full multi-board whiteboard as .mwb (JSON). Future: .mwbz zip with images. */
+    function wbBuildMwbPayload() {
+      try { wbSaveBoardSnapshot(); } catch (_) {}
+      return {
+        format: 'mwb',
+        version: 1,
+        // .mwbz reserved for zip package when boards embed images/media
+        note: 'Use .mwbz later for zipped boards with embedded images and assets',
+        exportedAt: new Date().toISOString(),
+        activeBoard: wbBoardIdx,
+        boards: (wbBoards || []).map(function (b, i) {
+          return {
+            index: i,
+            strokes: b.strokes || [],
+            texts: b.texts || [],
+            snapshot: b.snapshot || null
+          };
+        })
+      };
+    }
+    function wbExportMwb() {
+      var payload = wbBuildMwbPayload();
+      var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
       var a = document.createElement('a');
-      a.href = (wbShareCanvas || canvas).toDataURL('image/png');
-      a.download = 'whiteboard-board-' + (wbBoardIdx + 1) + '.png';
+      a.href = URL.createObjectURL(blob);
+      a.download = 'whiteboard-' + Date.now() + '.mwb';
       a.click();
+      setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (_) {} }, 2000);
+    }
+    function wbImportMwbFile(file) {
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var data = JSON.parse(reader.result);
+          if (!data || data.format !== 'mwb' || !Array.isArray(data.boards)) {
+            alert('Invalid .mwb file');
+            return;
+          }
+          wbBoards = data.boards.map(function (b) {
+            return {
+              strokes: b.strokes || [],
+              texts: b.texts || [],
+              snapshot: b.snapshot || null
+            };
+          });
+          if (!wbBoards.length) wbBoards = [{ strokes: [], texts: [], snapshot: null }];
+          wbBoardIdx = Math.min(Math.max(0, data.activeBoard | 0), wbBoards.length - 1);
+          wbRedrawFromBoard();
+          if (typeof wbUpdateBoardLabel === 'function') wbUpdateBoardLabel();
+          else {
+            var lab = document.getElementById('wbBoardLabel');
+            if (lab) lab.textContent = (wbBoardIdx + 1) + ' / ' + wbBoards.length;
+          }
+          if (typeof showToast === 'function') showToast('Whiteboard imported');
+        } catch (err) {
+          console.error(err);
+          alert('Could not import .mwb file');
+        }
+      };
+      reader.readAsText(file);
+    }
+    function wbAutoSavePersonal() {
+      try {
+        if (!wbBoards || !wbBoards.length) return;
+        var key = 'meet-wb-autosave';
+        localStorage.setItem(key, JSON.stringify(wbBuildMwbPayload()));
+      } catch (_) {}
+    }
+    window.__meetWbAutoSave = wbAutoSavePersonal;
+    document.getElementById('wbExport')?.addEventListener('click', function () {
+      wbExportMwb();
     });
+    document.getElementById('wbImport')?.addEventListener('click', function () {
+      document.getElementById('wbImportFile')?.click();
+    });
+    document.getElementById('wbImportFile')?.addEventListener('change', function (e) {
+      var f = e.target && e.target.files && e.target.files[0];
+      if (f) wbImportMwbFile(f);
+      e.target.value = '';
+    });
+    // Text decoration while editing
+    function wbExecDecor(cmd) {
+      try {
+        document.execCommand(cmd, false, null);
+        var el = document.activeElement;
+        if (el && el.classList && el.classList.contains('wb-textbox')) {
+          wbSaveBoardSnapshot();
+        }
+      } catch (_) {}
+    }
+    document.getElementById('wbBold')?.addEventListener('click', function () { wbExecDecor('bold'); });
+    document.getElementById('wbItalic')?.addEventListener('click', function () { wbExecDecor('italic'); });
+    document.getElementById('wbUnderline')?.addEventListener('click', function () { wbExecDecor('underline'); });
     document.getElementById('wbAddBoard')?.addEventListener('click', function () {
       wbSaveBoardSnapshot();
       wbBoards.push({ strokes: [], texts: [], snapshot: null });
@@ -9627,16 +9778,30 @@
       },
       'breakout-state': function (msg) {
         const list = document.getElementById('breakoutList');
-        if (!list) return;
-        list.innerHTML = '';
-        ((msg.breakouts && msg.breakouts.rooms) || []).forEach((r) => {
-          const li = document.createElement('li');
-          li.textContent = r.name + ' (' + ((r.participantIds && r.participantIds.length) || 0) + ' people)';
-          list.appendChild(li);
-        });
+        if (list) {
+          list.innerHTML = '';
+          ((msg.breakouts && msg.breakouts.rooms) || []).forEach((r) => {
+            const li = document.createElement('li');
+            li.textContent = r.name + ' (' + ((r.participantIds && r.participantIds.length) || 0) + ' people)';
+            list.appendChild(li);
+          });
+        }
+        try {
+          if (typeof window.__meetRenderBreakouts === 'function') window.__meetRenderBreakouts(msg.breakouts);
+        } catch (_) {}
       },
       'breakout-assign': function (msg) {
         if (typeof showToast === 'function') showToast('Assigned to ' + ((msg.room && msg.room.name) || 'breakout'));
+        // Offer open-in-new-tab for assigned room
+        try {
+          var room = msg.room;
+          if (room && currentMeeting && currentMeeting.code) {
+            var href = location.origin + '/m/' + encodeURIComponent(currentMeeting.code) + '?breakout=' + encodeURIComponent(room.id || '');
+            if (confirm('Join breakout "' + (room.name || room.id) + '" in a new tab?')) {
+              window.open(href, '_blank', 'noopener');
+            }
+          }
+        } catch (_) {}
       },
       'breakout-return': function () {
         if (typeof showToast === 'function') showToast('Return to main meeting');
@@ -11334,4 +11499,347 @@
     }
   });
 
+  // ----- Idle stage: analog clock + motivators -----
+  (function initIdleStage() {
+    var hourEl = document.getElementById('clkHour');
+    var minEl = document.getElementById('clkMinute');
+    var secEl = document.getElementById('clkSecond');
+    var motivEl = document.getElementById('idleMotivator');
+    var ph = document.getElementById('bigPlaceholder');
+    if (!hourEl || !minEl || !secEl) return;
+
+    function tickClock() {
+      var now = new Date();
+      var s = now.getSeconds() + now.getMilliseconds() / 1000;
+      var m = now.getMinutes() + s / 60;
+      var h = (now.getHours() % 12) + m / 60;
+      secEl.style.transform = 'rotate(' + (s * 6) + 'deg)';
+      minEl.style.transform = 'rotate(' + (m * 6) + 'deg)';
+      hourEl.style.transform = 'rotate(' + (h * 30) + 'deg)';
+    }
+    tickClock();
+    setInterval(tickClock, 50);
+
+    var lines = (window.MEET_MOTIVATORS && window.MEET_MOTIVATORS.slice()) || [
+      'Progress, not perfection. 💪'
+    ];
+    var motivTimer = null;
+    var typing = false;
+
+    function placeMotivator() {
+      if (!motivEl || !ph) return;
+      var w = ph.clientWidth || 300;
+      var h = ph.clientHeight || 200;
+      var pad = 24;
+      var left = pad + Math.random() * Math.max(40, w - 220 - pad * 2);
+      var top = pad + Math.random() * Math.max(40, h - 80 - pad * 2);
+      motivEl.style.left = left + 'px';
+      motivEl.style.top = top + 'px';
+      motivEl.style.right = 'auto';
+      motivEl.style.bottom = 'auto';
+    }
+
+    function typeLine(text, done) {
+      typing = true;
+      motivEl.classList.add('visible');
+      motivEl.innerHTML = '';
+      var i = 0;
+      var cursor = document.createElement('span');
+      cursor.className = 'typed-cursor';
+      function step() {
+        if (i <= text.length) {
+          motivEl.textContent = text.slice(0, i);
+          motivEl.appendChild(cursor);
+          i++;
+          setTimeout(step, 28 + Math.random() * 36);
+        } else {
+          typing = false;
+          if (done) done();
+        }
+      }
+      step();
+    }
+
+    function cycleMotivator() {
+      if (!motivEl || (ph && ph.classList.contains('hidden'))) {
+        motivTimer = setTimeout(cycleMotivator, 4000);
+        return;
+      }
+      var text = lines[Math.floor(Math.random() * lines.length)];
+      placeMotivator();
+      typeLine(text, function () {
+        setTimeout(function () {
+          motivEl.classList.remove('visible');
+          setTimeout(cycleMotivator, 1200 + Math.random() * 2000);
+        }, 3200 + Math.random() * 1800);
+      });
+    }
+    setTimeout(cycleMotivator, 1500);
+  })();
+
+  // ----- Breakout rooms in col2 + room panel -----
+  (function initBreakoutCol2() {
+    function isHostOnly() {
+      return myRole === 'host' || (currentMeeting && currentMeeting.isHost && myRole !== 'cohost' && myRole !== 'participant' && myRole !== 'guest');
+    }
+    function parentCode() {
+      return (currentMeeting && currentMeeting.code) || '';
+    }
+    function boUrl(room) {
+      var code = parentCode();
+      var path = '/m/' + encodeURIComponent(code) + '?breakout=' + encodeURIComponent(room.id || room.livekitRoom || '');
+      try {
+        return location.origin + path;
+      } catch (_) {
+        return path;
+      }
+    }
+    function renderBreakoutUI(state) {
+      var slot = document.getElementById('roomBreakoutSlot');
+      var listCol2 = document.getElementById('breakoutCol2List');
+      var hostBox = document.getElementById('breakoutCol2Host');
+      if (hostBox) hostBox.classList.toggle('hidden', !isHostOnly());
+
+      var rooms = (state && state.open && state.rooms) ? state.rooms : [];
+      if (slot) {
+        if (!rooms.length) {
+          slot.innerHTML = '';
+        } else {
+          var html = '<div class="breakout-room-block"><h4><i class="fa-solid fa-people-group"></i> Breakout rooms</h4>';
+          rooms.forEach(function (r) {
+            var href = boUrl(r);
+            html += '<div class="breakout-room-item">' +
+              '<label><input type="checkbox" class="bo-join-check" data-room="' + (r.id || '') + '"> ' +
+              (r.name || r.id) + '</label>' +
+              '<button type="button" class="bo-join-btn" data-href="' + href.replace(/"/g, '&quot;') + '">Open</button>' +
+              '<span class="quiet-label">(' + (r.participantIds ? r.participantIds.length : 0) + ')</span>' +
+              '</div>';
+          });
+          html += '</div>';
+          slot.innerHTML = html;
+          slot.querySelectorAll('.bo-join-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              var href = btn.getAttribute('data-href');
+              if (href) window.open(href, '_blank', 'noopener');
+            });
+          });
+        }
+      }
+      if (listCol2) {
+        if (!rooms.length) {
+          listCol2.innerHTML = '<p class="quiet-label">No breakout rooms yet.' + (isHostOnly() ? ' Create rooms above.' : '') + '</p>';
+        } else {
+          listCol2.innerHTML = '';
+          rooms.forEach(function (r) {
+            var card = document.createElement('div');
+            card.className = 'bo-room-card';
+            var href = boUrl(r);
+            card.innerHTML = '<h5>' + (r.name || r.id) + '</h5>' +
+              '<div class="bo-addr">' + href + '</div>' +
+              '<button type="button" class="btn small-btn primary-btn bo-open">Open in new tab</button>' +
+              (isHostOnly() ? '<div class="bo-add-row" style="margin-top:0.4rem"><select class="bo-add-select" data-room="' + (r.id || '') + '"><option value="">Add member…</option></select></div>' : '') +
+              '<ul class="bo-member-list"></ul>';
+            var ul = card.querySelector('.bo-member-list');
+            (r.participantIds || []).forEach(function (pid) {
+              var p = (participants || []).find(function (x) { return (x.id || x.participantId) === pid; });
+              var li = document.createElement('li');
+              li.textContent = p ? (p.name || pid) : pid;
+              ul.appendChild(li);
+            });
+            card.querySelector('.bo-open').addEventListener('click', function () {
+              window.open(href, '_blank', 'noopener');
+            });
+            var sel = card.querySelector('.bo-add-select');
+            if (sel) {
+              (participants || []).forEach(function (p) {
+                var id = p.id || p.participantId;
+                if (!id || (r.participantIds || []).indexOf(id) >= 0) return;
+                if (p.role === 'host' || p.isHost) return; // host may stay out
+                var opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = p.name || id;
+                sel.appendChild(opt);
+              });
+              sel.addEventListener('change', function () {
+                var tid = sel.value;
+                if (!tid) return;
+                if (typeof sendWS === 'function') sendWS({ type: 'breakout-move', targetId: tid, roomId: r.id });
+                sel.value = '';
+              });
+            }
+            listCol2.appendChild(card);
+          });
+        }
+      }
+    }
+
+    window.__meetRenderBreakouts = renderBreakoutUI;
+
+    window.__meetOpenBreakout = function () {
+      // Prefer col2 panel
+      var panel = document.getElementById('breakoutCol2Panel');
+      if (panel) {
+        document.querySelectorAll('.side-tab-panel').forEach(function (p) { p.classList.add('hidden'); p.classList.remove('active'); });
+        panel.classList.remove('hidden');
+        panel.classList.add('active');
+        document.getElementById('meetSideDrawer')?.classList.remove('hidden');
+        if (typeof window.__meetTogglePanel === 'function') {
+          try { /* keep drawer open */ } catch (_) {}
+        }
+        var hostBox = document.getElementById('breakoutCol2Host');
+        if (hostBox) hostBox.classList.toggle('hidden', !isHostOnly());
+        return;
+      }
+      document.getElementById('breakoutModal')?.classList.remove('hidden');
+    };
+
+    document.getElementById('breakoutCol2Back')?.addEventListener('click', function () {
+      var panel = document.getElementById('breakoutCol2Panel');
+      if (panel) {
+        panel.classList.add('hidden');
+        panel.classList.remove('active');
+      }
+      var room = document.getElementById('roomTab');
+      if (room) {
+        room.classList.remove('hidden');
+        room.classList.add('active');
+      }
+      document.querySelector('.side-tab[data-tab="room"]')?.click();
+    });
+
+    document.getElementById('breakoutCreateCol2')?.addEventListener('click', function () {
+      var count = parseInt(document.getElementById('breakoutCountCol2')?.value || '2', 10);
+      if (typeof sendWS === 'function') sendWS({ type: 'breakout-create', count: count });
+    });
+    document.getElementById('breakoutCloseAllCol2')?.addEventListener('click', function () {
+      if (typeof sendWS === 'function') sendWS({ type: 'breakout-close' });
+    });
+
+    // Hook breakout-state messages if handler map exists
+    var prev = window.__meetOnBreakoutState;
+    window.__meetOnBreakoutState = function (msg) {
+      if (typeof prev === 'function') prev(msg);
+      renderBreakoutUI(msg && msg.breakouts);
+    };
+  })();
+
+  // Patch breakout-state handler in existing map if present
+  try {
+    // Re-bind after breakout-state toast handlers by wrapping showToast path is hard;
+    // instead listen via Mutation-free WS intercept already in app — enhance known handler:
+  } catch (_) {}
+
+  // Enhance existing breakout-state case by monkey-patching after a short delay
+  setTimeout(function () {
+    // Already have 'breakout-state' in a handlers object around line 9628
+  }, 0);
+
+  // ----- Chat overlay uses inbox + threads (Ctrl+C / stage chat) -----
+  (function enhanceChatOverlay() {
+    var overlayChannelId = null;
+
+    function showOverlayInbox() {
+      overlayChannelId = null;
+      var inbox = document.getElementById('chatOverlayInbox');
+      var thread = document.getElementById('chatOverlayThread');
+      var back = document.getElementById('chatOverlayBack');
+      var title = document.getElementById('chatOverlayTitle');
+      if (inbox) inbox.classList.remove('hidden');
+      if (thread) thread.classList.add('hidden');
+      if (back) back.classList.add('hidden');
+      if (title) title.textContent = 'Chat';
+      renderOverlayInbox();
+    }
+
+    function renderOverlayInbox() {
+      var list = document.getElementById('chatOverlayInboxList');
+      if (!list) return;
+      list.innerHTML = '';
+      // Prefer shared chatChannels from main chat module
+      var channels = window.__meetChatChannels || null;
+      // Fallback: clone from #chatInboxList
+      var src = document.getElementById('chatInboxList');
+      if (src && src.children.length) {
+        Array.from(src.children).forEach(function (li) {
+          var clone = li.cloneNode(true);
+          clone.addEventListener('click', function (e) {
+            e.preventDefault();
+            var id = li.getAttribute('data-channel') || li.dataset.channel;
+            // Trigger original click then mirror into overlay
+            try { li.click(); } catch (_) {}
+            openOverlayThread(id, (li.querySelector('.dm-name, .chat-inbox-name') || {}).textContent || 'Chat');
+          });
+          list.appendChild(clone);
+        });
+        return;
+      }
+      // Minimal everyone channel
+      var li = document.createElement('li');
+      li.className = 'dm-item';
+      li.innerHTML = '<span class="dm-name">Everyone</span>';
+      li.addEventListener('click', function () {
+        openOverlayThread('everyone', 'Everyone');
+      });
+      list.appendChild(li);
+    }
+
+    function openOverlayThread(id, titleText) {
+      overlayChannelId = id || 'everyone';
+      var inbox = document.getElementById('chatOverlayInbox');
+      var thread = document.getElementById('chatOverlayThread');
+      var back = document.getElementById('chatOverlayBack');
+      var title = document.getElementById('chatOverlayTitle');
+      if (inbox) inbox.classList.add('hidden');
+      if (thread) thread.classList.remove('hidden');
+      if (back) back.classList.remove('hidden');
+      if (title) title.textContent = titleText || 'Chat';
+      // Copy messages from main chat if open
+      var mainMsgs = document.getElementById('chatMessages');
+      var box = document.getElementById('chatOverlayMessages');
+      if (box) {
+        box.innerHTML = mainMsgs ? mainMsgs.innerHTML : '';
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    document.getElementById('chatOverlayBack')?.addEventListener('click', showOverlayInbox);
+
+    var origOpen = window.openChatScreenOverlay || null;
+    // Hook open to show inbox first
+    var openBtn = document.getElementById('chatOverlayBtn') || document.getElementById('stageChatBtnTop');
+    // When overlay becomes visible, ensure inbox mode
+    var obsTarget = document.getElementById('chatScreenOverlay');
+    if (obsTarget && window.MutationObserver) {
+      var mo = new MutationObserver(function () {
+        if (!obsTarget.classList.contains('hidden')) {
+          showOverlayInbox();
+        }
+      });
+      mo.observe(obsTarget, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // Also refresh overlay inbox when main inbox re-renders
+    var _r = window.renderChatInbox;
+  })();
+
+  // Wire breakout-state into render
+  (function wireBreakoutState() {
+    var orig = null;
+    // Intercept safeSend side effects are hard; patch known handler registration by wrapping WS message types via existing map
+    // App uses a dict of handlers — find and wrap:
+    document.addEventListener('meet:breakout-state', function (ev) {
+      if (window.__meetRenderBreakouts) window.__meetRenderBreakouts(ev.detail);
+    });
+  })();
+
 })();
+
+// Global: ensure breakout-state UI updates (runs after main IIFE)
+(function () {
+  function hook() {
+    // Monkey-patch WebSocket message path is internal; instead poll is heavy.
+    // The app registers handlers in an object — we patch console or:
+  }
+  // Wrap JSON message dispatch if exposed
+})();
+

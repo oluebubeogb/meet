@@ -599,7 +599,26 @@
             </div>
 
             <!-- ROOM TAB -->
-            <div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
+            
+            <div class="side-tab-panel hidden" id="breakoutCol2Panel" data-tab="breakout" role="tabpanel">
+              <div class="breakout-panel-col2">
+                <div class="bo-back-row">
+                  <button type="button" id="breakoutCol2Back" class="btn icon-btn" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
+                  <strong>Breakout rooms</strong>
+                </div>
+                <div id="breakoutCol2Host" class="hidden">
+                  <label>Number of rooms <input type="number" id="breakoutCountCol2" min="2" max="10" value="2" style="width:4rem"></label>
+                  <div class="modal-actions" style="margin-top:0.5rem;display:flex;gap:0.4rem;flex-wrap:wrap">
+                    <button type="button" id="breakoutCreateCol2" class="btn primary-btn small-btn">Create rooms</button>
+                    <button type="button" id="breakoutCloseAllCol2" class="btn small-btn">Close all</button>
+                  </div>
+                </div>
+                <div id="breakoutCol2List"></div>
+              </div>
+            </div>
+<div class="side-tab-panel hidden" id="roomTab" data-tab="room" role="tabpanel">
+              <div id="roomBreakoutSlot"></div>
+
               <!-- Line 1: room menu -->
               <div class="panel-block media-panel-block" id="roomMenuLine">
                 <button type="button" class="more-item media-row-item" id="roomSecurityBtn" data-pane="security"><i class="fa-solid fa-shield-halved"></i> Security</button>
@@ -766,22 +785,36 @@
                 <button type="button" id="stageFsBtn" class="emoji-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
               </div>
             </div>
-              <div id="bigPlaceholder" class="placeholder stage-idle-bg" aria-hidden="true"></div>
+              <div id="bigPlaceholder" class="placeholder stage-idle-bg" aria-hidden="true">
+                <div class="idle-analog-clock" id="idleAnalogClock" aria-hidden="true">
+                  <div class="clk-hand clk-hour" id="clkHour"></div>
+                  <div class="clk-hand clk-minute" id="clkMinute"></div>
+                  <div class="clk-hand clk-second" id="clkSecond"></div>
+                  <div class="clk-center"></div>
+                </div>
+                <div id="idleMotivator" class="idle-motivator" aria-live="polite"></div>
+              </div>
               <div class="big-view-label" id="bigViewLabel"></div>
               <div id="reactionOverlay" class="reaction-overlay" aria-hidden="true"></div>
               <!-- screenFsBtn and chatOverlayBtn removed from stage -->
               <div id="chatPipStack" class="chat-pip-stack" aria-live="polite"></div>
               <div id="chatScreenOverlay" class="chat-screen-overlay hidden">
                 <div class="chat-screen-overlay-header">
-                  <span>Chat</span>
+                  <button type="button" id="chatOverlayBack" class="btn icon-btn hidden" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
+                  <span id="chatOverlayTitle">Chat</span>
                   <button type="button" id="chatOverlayClose" class="btn icon-btn" title="Close"><i class="fa-solid fa-xmark"></i></button>
                 </div>
-                <div id="chatOverlayMessages" class="chat-overlay-messages"></div>
-                <form id="chatOverlayForm" class="chat-overlay-form">
-                  <input id="chatOverlayInput" type="text" maxlength="2000" placeholder="Reply…" autocomplete="off">
-                  <button type="submit" class="btn icon-btn"><i class="fa-solid fa-paper-plane"></i></button>
-                </form>
-              </div>
+                <div id="chatOverlayInbox" class="chat-overlay-inbox">
+                  <ul id="chatOverlayInboxList" class="dm-list chat-inbox-list"></ul>
+                </div>
+                <div id="chatOverlayThread" class="chat-overlay-thread hidden">
+                  <div id="chatOverlayMessages" class="chat-overlay-messages"></div>
+                  <form id="chatOverlayForm" class="chat-overlay-form">
+                    <input id="chatOverlayInput" type="text" maxlength="2000" placeholder="Reply…" autocomplete="off">
+                    <button type="submit" class="btn icon-btn"><i class="fa-solid fa-paper-plane"></i></button>
+                  </form>
+                </div><!-- /#chatOverlayThread -->
+              </div><!-- /#chatScreenOverlay -->
             </div><!-- /.big-view -->
 
             <!-- Dynamic panel: mobile/tablet secondary surface for screens, chat, people, more, reactions, security -->
@@ -1291,10 +1324,15 @@
           <button type="button" class="btn icon-btn wb-tool" id="wbText" title="Text box" aria-label="Text box"><i class="fa-solid fa-font"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbSelect" title="Select / move / delete" aria-label="Select"><i class="fa-solid fa-arrow-pointer"></i></button>
           <input type="number" id="wbFontSize" class="wb-size-input" min="10" max="72" value="18" title="Text font size" aria-label="Text font size" inputmode="numeric">
+          <button type="button" class="btn icon-btn wb-tool" id="wbBold" title="Bold" aria-label="Bold"><i class="fa-solid fa-bold"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbItalic" title="Italic" aria-label="Italic"><i class="fa-solid fa-italic"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbUnderline" title="Underline" aria-label="Underline"><i class="fa-solid fa-underline"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbUndo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbRedo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
           <button type="button" class="btn icon-btn wb-tool" id="wbClear" title="Clear" aria-label="Clear"><i class="fa-solid fa-trash"></i></button>
-          <button type="button" class="btn icon-btn wb-tool" id="wbExport" title="Export" aria-label="Export"><i class="fa-solid fa-download"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbImport" title="Import .mwb" aria-label="Import whiteboard"><i class="fa-solid fa-file-import"></i></button>
+          <button type="button" class="btn icon-btn wb-tool" id="wbExport" title="Export .mwb" aria-label="Export whiteboard"><i class="fa-solid fa-download"></i></button>
+          <input type="file" id="wbImportFile" accept=".mwb,application/json" class="hidden" aria-hidden="true">
           <button type="button" class="btn icon-btn wb-tool" id="wbShare" title="Share whiteboard" aria-label="Share whiteboard"><i class="fa-solid fa-share-nodes"></i></button>
           <span class="wb-toolbar-spacer"></span>
           <div class="wb-boards-nav">
@@ -1384,6 +1422,7 @@
   <script src="js/features/mute.js?v=20260924secMob1"></script>
   <script src="js/features/device-icons.js?v=20260924secMob1"></script>
   <script src="js/main.js?v=20260924secMob1"></script>
+  <script src="js/motivators.js?v=1"></script>
   <script src="js/core/app.js?v=20261006drawerFix"></script>
 </body>
 </html>
