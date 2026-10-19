@@ -5335,11 +5335,16 @@ if (msg.type === 'ask-unmute') {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!currentMeeting) return;
       if (e.key === 'm' || e.key === 'M') {
-        // Short press handled on keyup so long-press M can open mic picker
         e.preventDefault();
-        if (window.__meetMLongFired) return;
-        // Defer toggle to keyup via flag — if long-press fires, skip
-        window.__meetMPendingToggle = true;
+        try { toggleMic(); } catch (_) {}
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        try { if (typeof window.__meetZoomIn === 'function') window.__meetZoomIn(); } catch (_) {}
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        try { if (typeof window.__meetZoomOut === 'function') window.__meetZoomOut(); } catch (_) {}
       }
       if (e.key === 's' || e.key === 'S') {
         if (e.metaKey || e.ctrlKey) return;
@@ -11893,14 +11898,12 @@ if (msg.type === 'ask-unmute') {
  * ======================================================================== */
 (function meetShortcutsAndMicUX() {
   var PREFERRED_MIC_KEY = 'meet.preferredMicId';
-  var mKeyDownAt = 0;
-  var mLongFired = false;
-  var M_LONG_MS = 450;
   var autoPipArmed = false;
 
   var SHORTCUT_ROWS = [
-    { keys: ['M'], label: 'Toggle microphone', hint: 'Short press' },
-    { keys: ['Hold M'], label: 'Choose microphone source', hint: 'Long press ~0.5s' },
+    { keys: ['M'], label: 'Toggle microphone' },
+    { keys: ['↑'], label: 'Zoom in' },
+    { keys: ['↓'], label: 'Zoom out' },
     { keys: ['S'], label: 'Start / stop screen share' },
     { keys: ['H'], label: 'Raise / lower hand' },
     { keys: ['K'], label: 'Open shortcuts panel' },
@@ -12115,88 +12118,24 @@ if (msg.type === 'ask-unmute') {
     if (e.target === e.currentTarget) closeMicPicker();
   });
 
-  // Long-press M + K for shortcuts
+  // K opens shortcuts; Arrow Up/Down zoom (also in phase2 handler)
   document.addEventListener('keydown', function (e) {
     if (isTypingTarget(e.target)) return;
     if (!inMeeting()) return;
-    if (e.key === 'm' || e.key === 'M') {
-      if (e.repeat) return;
-      mKeyDownAt = Date.now();
-      mLongFired = false;
-      // Schedule long-press
-      clearTimeout(window.__meetMLongTimer);
-      window.__meetMLongTimer = setTimeout(function () {
-        mLongFired = true;
-        window.__meetMLongFired = true;
-        window.__meetMPendingToggle = false;
-        try { openMicPicker(); } catch (_) {}
-      }, M_LONG_MS);
-      // Don't preventDefault yet — short press handled by existing toggleMic listener
-      return;
-    }
     if (e.key === 'k' || e.key === 'K') {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       openShortcutsPanel();
     }
-  }, true);
-
-  document.addEventListener('keyup', function (e) {
-    if (e.key === 'm' || e.key === 'M') {
-      clearTimeout(window.__meetMLongTimer);
-      if (mLongFired || window.__meetMLongFired) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.__meetMPendingToggle = false;
-        window.__meetMLongFired = false;
-        mLongFired = false;
-        mKeyDownAt = 0;
-        return;
-      }
-      // Short press: toggle mic
-      if (window.__meetMPendingToggle && inMeeting() && !isTypingTarget(e.target)) {
-        window.__meetMPendingToggle = false;
-        try {
-          if (typeof toggleMic === 'function') toggleMic();
-        } catch (_) {}
-      }
-      mKeyDownAt = 0;
-      mLongFired = false;
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      try { if (typeof window.__meetZoomIn === 'function') window.__meetZoomIn(); } catch (_) {}
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      try { if (typeof window.__meetZoomOut === 'function') window.__meetZoomOut(); } catch (_) {}
     }
   }, true);
-
-  // Long-press on mic toolbar button
-  function wireMicLongPress(btn) {
-    if (!btn || btn.dataset.micLongWired) return;
-    btn.dataset.micLongWired = '1';
-    var long = false;
-    var timer = null;
-    btn.addEventListener('pointerdown', function (e) {
-      if (e.button && e.button !== 0) return;
-      long = false;
-      timer = setTimeout(function () {
-        long = true;
-        openMicPicker();
-      }, M_LONG_MS);
-    });
-    function end() {
-      if (timer) clearTimeout(timer);
-      timer = null;
-    }
-    btn.addEventListener('pointerup', end);
-    btn.addEventListener('pointerleave', end);
-    btn.addEventListener('pointercancel', end);
-    btn.addEventListener('click', function (e) {
-      if (long) {
-        e.preventDefault();
-        e.stopPropagation();
-        long = false;
-      }
-    }, true);
-  }
-  wireMicLongPress(document.getElementById('micBtn'));
-  wireMicLongPress(document.getElementById('mfnMic'));
-  wireMicLongPress(document.getElementById('mediaMicToggle'));
 
   // Populate shortcuts when panel opens
   var origToggle = window.__meetTogglePanel;
@@ -12363,8 +12302,9 @@ if (msg.type === 'ask-unmute') {
     if (!list) return;
     if (list.children.length === 0) {
       var rows = [
-        ['M', 'Toggle microphone', 'Short press'],
-        ['Hold M', 'Choose microphone source', 'Long press ~0.5s'],
+        ['M', 'Toggle microphone', ''],
+        ['↑', 'Zoom in', ''],
+        ['↓', 'Zoom out', ''],
         ['S', 'Start / stop screen share', ''],
         ['H', 'Raise / lower hand', ''],
         ['K', 'Open shortcuts panel', ''],
@@ -12497,4 +12437,93 @@ if (msg.type === 'ask-unmute') {
       prevRosterCount = n;
     } catch (_) {}
   }, 1200);
+})();
+
+
+/* ========================================================================
+ * Page zoom: Arrow Up / Down; force 100% when joining a meeting
+ * ======================================================================== */
+(function meetPageZoom() {
+  var ZOOM_KEY = 'meet.pageZoom';
+  var MIN = 0.75;
+  var MAX = 1.5;
+  var STEP = 0.05;
+  var zoom = 1;
+
+  function readStored() {
+    try {
+      var v = parseFloat(localStorage.getItem(ZOOM_KEY));
+      if (isFinite(v) && v >= MIN && v <= MAX) return v;
+    } catch (_) {}
+    return 1;
+  }
+
+  function applyZoom(z, persist) {
+    zoom = Math.round(Math.min(MAX, Math.max(MIN, z)) * 100) / 100;
+    try {
+      document.documentElement.style.zoom = String(zoom);
+    } catch (_) {}
+    // Fallback for Firefox (no CSS zoom): scale on body
+    try {
+      if (!('zoom' in document.documentElement.style) || /firefox/i.test(navigator.userAgent)) {
+        document.body.style.transformOrigin = '0 0';
+        if (zoom === 1) {
+          document.body.style.transform = '';
+          document.body.style.width = '';
+        } else {
+          document.body.style.transform = 'scale(' + zoom + ')';
+          document.body.style.width = (100 / zoom) + '%';
+        }
+      }
+    } catch (_) {}
+    if (persist !== false) {
+      try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (_) {}
+    }
+  }
+
+  function resetZoom100() {
+    applyZoom(1, true);
+  }
+
+  window.__meetZoomIn = function () {
+    applyZoom(zoom + STEP, true);
+    if (typeof showToast === 'function') showToast('Zoom ' + Math.round(zoom * 100) + '%');
+  };
+  window.__meetZoomOut = function () {
+    applyZoom(zoom - STEP, true);
+    if (typeof showToast === 'function') showToast('Zoom ' + Math.round(zoom * 100) + '%');
+  };
+  window.__meetZoomReset = resetZoom100;
+  window.__meetGetZoom = function () { return zoom; };
+
+  // Always start the session at 100% so join doesn't inherit a shrunken view
+  resetZoom100();
+  document.documentElement.classList.add('meet-zoom-ready');
+
+  // Force 100% when entering a meeting (create or join)
+  var lastCode = null;
+  setInterval(function () {
+    try {
+      if (typeof currentMeeting === 'undefined' || !currentMeeting) {
+        lastCode = null;
+        return;
+      }
+      var code = currentMeeting.code || currentMeeting.participantId;
+      if (code && code !== lastCode) {
+        lastCode = code;
+        resetZoom100();
+        // Re-assert after layout settles (mobile fullscreen / rail can reflow)
+        setTimeout(resetZoom100, 300);
+        setTimeout(resetZoom100, 1200);
+      }
+    } catch (_) {}
+  }, 500);
+
+  // Also on visibility return (some mobile browsers change scale)
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && typeof currentMeeting !== 'undefined' && currentMeeting) {
+      // Keep user preference only if they zoomed after join; if near 1, snap to 1
+      if (Math.abs(zoom - 1) < 0.02) resetZoom100();
+    }
+  });
 })();

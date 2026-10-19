@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, viewport-fit=cover">
   <title>Meet — Collab Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -538,8 +538,9 @@
               <div class="panel-block shortcuts-panel-block">
                 <div class="more-hub-section">Keyboard shortcuts</div>
                 <ul class="shortcuts-stripe-list" id="shortcutsStripeList" aria-label="Meeting shortcuts">
-                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">M</span></span><span class="shortcut-label">Toggle microphone<em>Short press</em></span></li>
-                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">Hold M</span></span><span class="shortcut-label">Choose microphone source<em>Long press ~0.5s</em></span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">M</span></span><span class="shortcut-label">Toggle microphone</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↑</span></span><span class="shortcut-label">Zoom in</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↓</span></span><span class="shortcut-label">Zoom out</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">S</span></span><span class="shortcut-label">Start / stop screen share</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">H</span></span><span class="shortcut-label">Raise / lower hand</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">K</span></span><span class="shortcut-label">Open shortcuts panel</span></li>
@@ -1440,8 +1441,13 @@
       <div class="modal-backdrop" id="micSourceBackdrop"></div>
       <div class="modal-card mic-source-card">
         <button type="button" class="modal-close" id="micSourceClose" title="Close" aria-label="Close">&times;</button>
-        <h2 id="micSourceTitle"><i class="fa-solid fa-microphone"></i> Choose microphone</h2>
-        <p class="modal-sub">Select the mic you want to use in this meeting.</p>
+        <div class="mic-source-header">
+          <div class="mic-source-icon-badge"><i class="fa-solid fa-microphone"></i></div>
+          <div class="mic-source-heading">
+            <h2 id="micSourceTitle">Choose microphone</h2>
+            <p class="mic-source-sub">Pick the input you want for this meeting.</p>
+          </div>
+        </div>
         <div class="mic-source-list" id="micSourceList" role="listbox" aria-label="Available microphones"></div>
         <div class="mic-source-actions">
           <button type="button" id="micSourceRefresh" class="btn small-btn"><i class="fa-solid fa-rotate"></i> Refresh</button>
