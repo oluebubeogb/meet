@@ -11902,8 +11902,8 @@ if (msg.type === 'ask-unmute') {
 
   var SHORTCUT_ROWS = [
     { keys: ['M'], label: 'Toggle microphone' },
-    { keys: ['↑'], label: 'Zoom in' },
-    { keys: ['↓'], label: 'Zoom out' },
+    { keys: ['↑'], label: 'UI scale up' },
+    { keys: ['↓'], label: 'UI scale down' },
     { keys: ['S'], label: 'Start / stop screen share' },
     { keys: ['H'], label: 'Raise / lower hand' },
     { keys: ['K'], label: 'Open shortcuts panel' },
@@ -12303,8 +12303,8 @@ if (msg.type === 'ask-unmute') {
     if (list.children.length === 0) {
       var rows = [
         ['M', 'Toggle microphone', ''],
-        ['↑', 'Zoom in', ''],
-        ['↓', 'Zoom out', ''],
+        ['↑', 'UI scale up', ''],
+        ['↓', 'UI scale down', ''],
         ['S', 'Start / stop screen share', ''],
         ['H', 'Raise / lower hand', ''],
         ['K', 'Open shortcuts panel', ''],
@@ -12441,66 +12441,147 @@ if (msg.type === 'ask-unmute') {
 
 
 /* ========================================================================
- * Page zoom: Arrow Up / Down; force 100% when joining a meeting
+ * UI scale (Arrow Up / Down) + browser-zoom guidance
+ * Chrome per-site zoom (Ctrl+/-) cannot be changed by JS — we only control
+ * app UI scale and prompt Ctrl+0 / Cmd+0 when the page looks shrunken.
  * ======================================================================== */
 (function meetPageZoom() {
-  var ZOOM_KEY = 'meet.pageZoom';
-  var MIN = 0.75;
-  var MAX = 1.5;
+  var SCALE_KEY = 'meet.uiScale';
+  var BANNER_KEY = 'meet.zoomBannerDismissed';
+  var MIN = 0.85;
+  var MAX = 1.25;
   var STEP = 0.05;
-  var zoom = 1;
+  var scale = 1;
 
-  function readStored() {
-    try {
-      var v = parseFloat(localStorage.getItem(ZOOM_KEY));
-      if (isFinite(v) && v >= MIN && v <= MAX) return v;
-    } catch (_) {}
-    return 1;
+  function appEl() {
+    return document.querySelector('.app') || document.body;
   }
 
-  function applyZoom(z, persist) {
-    zoom = Math.round(Math.min(MAX, Math.max(MIN, z)) * 100) / 100;
+  function applyUiScale(z, persist) {
+    scale = Math.round(Math.min(MAX, Math.max(MIN, z)) * 100) / 100;
+    var el = appEl();
     try {
-      document.documentElement.style.zoom = String(zoom);
-    } catch (_) {}
-    // Fallback for Firefox (no CSS zoom): scale on body
-    try {
-      if (!('zoom' in document.documentElement.style) || /firefox/i.test(navigator.userAgent)) {
-        document.body.style.transformOrigin = '0 0';
-        if (zoom === 1) {
+      // Clear any accidental documentElement CSS zoom (compounds with browser zoom)
+      document.documentElement.style.zoom = '';
+      document.documentElement.style.removeProperty('zoom');
+      if (document.body) {
+        document.body.style.zoom = '';
+        document.body.style.removeProperty('zoom');
+        // Clear old transform fallback from previous build
+        if (document.body.style.transform && document.body.style.transform.indexOf('scale') >= 0) {
           document.body.style.transform = '';
           document.body.style.width = '';
-        } else {
-          document.body.style.transform = 'scale(' + zoom + ')';
-          document.body.style.width = (100 / zoom) + '%';
+          document.body.style.transformOrigin = '';
         }
       }
     } catch (_) {}
+    try {
+      el.style.transformOrigin = '0 0';
+      if (scale === 1) {
+        el.style.transform = '';
+        el.style.width = '';
+        el.removeAttribute('data-ui-scale');
+      } else {
+        el.style.transform = 'scale(' + scale + ')';
+        el.style.width = (100 / scale) + '%';
+        el.setAttribute('data-ui-scale', String(scale));
+      }
+    } catch (_) {}
     if (persist !== false) {
-      try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (_) {}
+      try { localStorage.setItem(SCALE_KEY, String(scale)); } catch (_) {}
     }
   }
 
-  function resetZoom100() {
-    applyZoom(1, true);
+  function resetUiScale100() {
+    applyUiScale(1, true);
+  }
+
+  /** Heuristic: browser page zoom is likely below ~90%. */
+  function estimateBrowserZoomPct() {
+    try {
+      // visualViewport.scale is mainly pinch-zoom; still useful on some platforms
+      if (window.visualViewport && typeof window.visualViewport.scale === 'number') {
+        var vs = window.visualViewport.scale;
+        if (vs > 0.1 && Math.abs(vs - 1) > 0.02) {
+          return Math.round(vs * 100);
+        }
+      }
+    } catch (_) {}
+    try {
+      // Measure a fixed CSS pixel box vs its layout size under browser zoom
+      var probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:100px;margin:0;padding:0;border:0;';
+      document.documentElement.appendChild(probe);
+      var rect = probe.getBoundingClientRect().width;
+      probe.remove();
+      // With only browser zoom, rect stays ~100. With CSS zoom on ancestors it changes.
+      // Fallback: outer/inner width ratio when window is maximized-ish
+      if (window.outerWidth && window.innerWidth) {
+        var ratio = window.outerWidth / window.innerWidth;
+        // When browser zoom is 67%, innerWidth is larger relative to layout in some browsers
+        // Chrome: devicePixelRatio includes system DPI; compare to screen
+        if (window.screen && window.screen.width && window.innerWidth) {
+          // If user is zoomed out, more CSS pixels fit on screen
+          var approx = (window.screen.width / window.innerWidth) * (window.devicePixelRatio || 1);
+          // Unreliable alone — only flag extreme cases
+        }
+      }
+      void rect;
+    } catch (_) {}
+    return null;
+  }
+
+  function showZoomBanner(force) {
+    var banner = document.getElementById('meetZoomBanner');
+    if (!banner) return;
+    try {
+      if (!force && localStorage.getItem(BANNER_KEY) === '1') return;
+    } catch (_) {}
+    var isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || '') || /Mac OS/i.test(navigator.userAgent || '');
+    var keys = isMac ? '<kbd>Cmd</kbd> + <kbd>0</kbd>' : '<kbd>Ctrl</kbd> + <kbd>0</kbd>';
+    var text = document.getElementById('meetZoomBannerText');
+    if (text) {
+      text.innerHTML = 'If text looks tiny, reset <strong>browser zoom</strong> with ' + keys + ' (Chrome remembers zoom per site). UI scale is already 100%.';
+    }
+    banner.classList.remove('hidden');
+  }
+
+  function hideZoomBanner(dismissForever) {
+    var banner = document.getElementById('meetZoomBanner');
+    if (banner) banner.classList.add('hidden');
+    if (dismissForever) {
+      try { localStorage.setItem(BANNER_KEY, '1'); } catch (_) {}
+    }
   }
 
   window.__meetZoomIn = function () {
-    applyZoom(zoom + STEP, true);
-    if (typeof showToast === 'function') showToast('Zoom ' + Math.round(zoom * 100) + '%');
+    applyUiScale(scale + STEP, true);
+    if (typeof showToast === 'function') showToast('UI scale ' + Math.round(scale * 100) + '%');
   };
   window.__meetZoomOut = function () {
-    applyZoom(zoom - STEP, true);
-    if (typeof showToast === 'function') showToast('Zoom ' + Math.round(zoom * 100) + '%');
+    applyUiScale(scale - STEP, true);
+    if (typeof showToast === 'function') showToast('UI scale ' + Math.round(scale * 100) + '%');
   };
-  window.__meetZoomReset = resetZoom100;
-  window.__meetGetZoom = function () { return zoom; };
+  window.__meetZoomReset = resetUiScale100;
+  window.__meetGetZoom = function () { return scale; };
 
-  // Always start the session at 100% so join doesn't inherit a shrunken view
-  resetZoom100();
+  // Boot: clear bad CSS zoom from older builds, force UI scale 100%
+  resetUiScale100();
   document.documentElement.classList.add('meet-zoom-ready');
 
-  // Force 100% when entering a meeting (create or join)
+  document.getElementById('meetZoomBannerReset')?.addEventListener('click', function () {
+    resetUiScale100();
+    hideZoomBanner(false);
+    if (typeof showToast === 'function') {
+      var isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || '');
+      showToast(isMac ? 'UI scale 100%. If still small, press Cmd+0' : 'UI scale 100%. If still small, press Ctrl+0');
+    }
+  });
+  document.getElementById('meetZoomBannerDismiss')?.addEventListener('click', function () {
+    hideZoomBanner(true);
+  });
+
+  // On meeting enter: force 100% UI scale + show browser-zoom tip once
   var lastCode = null;
   setInterval(function () {
     try {
@@ -12511,19 +12592,27 @@ if (msg.type === 'ask-unmute') {
       var code = currentMeeting.code || currentMeeting.participantId;
       if (code && code !== lastCode) {
         lastCode = code;
-        resetZoom100();
-        // Re-assert after layout settles (mobile fullscreen / rail can reflow)
-        setTimeout(resetZoom100, 300);
-        setTimeout(resetZoom100, 1200);
+        resetUiScale100();
+        setTimeout(resetUiScale100, 200);
+        setTimeout(resetUiScale100, 800);
+        // Tip after join — browser zoom is the usual cause of ~67%
+        setTimeout(function () {
+          showZoomBanner(false);
+          // Auto-hide after 12s unless dismissed
+          setTimeout(function () {
+            var b = document.getElementById('meetZoomBanner');
+            if (b && !b.classList.contains('hidden')) hideZoomBanner(false);
+          }, 12000);
+        }, 900);
       }
     } catch (_) {}
-  }, 500);
+  }, 400);
 
-  // Also on visibility return (some mobile browsers change scale)
-  document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && typeof currentMeeting !== 'undefined' && currentMeeting) {
-      // Keep user preference only if they zoomed after join; if near 1, snap to 1
-      if (Math.abs(zoom - 1) < 0.02) resetZoom100();
+  // Ctrl+0 / Cmd+0 also resets our UI scale (browser handles its own zoom)
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === '0' || e.code === 'Digit0')) {
+      resetUiScale100();
     }
-  });
+  }, true);
 })();
+

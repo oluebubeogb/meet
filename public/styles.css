@@ -8449,13 +8449,57 @@ html.dark .shortcut-key {
   opacity: 1;
 }
 
-/* ===== Page zoom (Arrow Up / Down) — reset to 100% on meeting start ===== */
-html.meet-zoom-ready,
-html.meet-zoom-ready body {
-  /* browser zoom is controlled via JS on documentElement */
-}
+/* ===== App UI scale (Arrow Up / Down) — does NOT touch browser zoom ===== */
 html {
-  zoom: 1;
+  /* never set CSS zoom on html — it compounds with Chrome per-site zoom */
+}
+.app {
+  transform-origin: 0 0;
+}
+.app[data-ui-scale]:not([data-ui-scale="1"]) {
+  /* scale applied via inline style from JS when user presses ↑/↓ */
+}
+.meet-zoom-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 10050;
+  max-width: min(92vw, 420px);
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: #1a1d27;
+  color: #f4f5f8;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 0.85rem;
+}
+.meet-zoom-banner kbd {
+  display: inline-block;
+  padding: 0.12rem 0.4rem;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.2);
+  font-size: 0.8rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.meet-zoom-banner .meet-zoom-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.meet-zoom-banner .btn {
+  font-size: 0.8rem;
+  min-height: 2rem;
+}
+.meet-zoom-banner.hidden { display: none !important; }
+html.dark .meet-zoom-banner {
+  background: #0c0e14;
+  border: 1px solid rgba(255,255,255,0.1);
 }
 
 /* ===== Mic source overlay — readable, roomy, no cramped text ===== */

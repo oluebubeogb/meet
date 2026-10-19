@@ -539,8 +539,8 @@
                 <div class="more-hub-section">Keyboard shortcuts</div>
                 <ul class="shortcuts-stripe-list" id="shortcutsStripeList" aria-label="Meeting shortcuts">
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">M</span></span><span class="shortcut-label">Toggle microphone</span></li>
-                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↑</span></span><span class="shortcut-label">Zoom in</span></li>
-                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↓</span></span><span class="shortcut-label">Zoom out</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↑</span></span><span class="shortcut-label">UI scale up (app only)</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">↓</span></span><span class="shortcut-label">UI scale down (app only)</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">S</span></span><span class="shortcut-label">Start / stop screen share</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">H</span></span><span class="shortcut-label">Raise / lower hand</span></li>
                   <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">K</span></span><span class="shortcut-label">Open shortcuts panel</span></li>
@@ -1456,6 +1456,13 @@
       </div>
     </div>
 
+    <div id="meetZoomBanner" class="meet-zoom-banner hidden" role="status">
+      <span id="meetZoomBannerText">Text looks small? Your <strong>browser zoom</strong> may be below 100%.</span>
+      <div class="meet-zoom-actions">
+        <button type="button" class="btn small-btn primary-btn" id="meetZoomBannerReset">Reset UI scale</button>
+        <button type="button" class="btn small-btn" id="meetZoomBannerDismiss">Dismiss</button>
+      </div>
+    </div>
     <div id="toastHost" class="toast-host" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.1/dist/livekit-client.umd.min.js"></script>
