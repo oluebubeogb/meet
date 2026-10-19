@@ -231,6 +231,13 @@
                   <input id="joinNumbers" type="text" maxlength="3" placeholder="123" inputmode="numeric" autocomplete="off" aria-label="Meeting code numbers">
                 </div>
                 <input id="joinYourName" type="text" maxlength="40" placeholder="Your name" autocomplete="off" aria-label="Your name">
+                                <div class="join-mic-row" id="joinMicRow">
+                  <label class="join-mic-label" for="joinMicDeviceSelect"><i class="fa-solid fa-microphone"></i> Microphone</label>
+                  <select id="joinMicDeviceSelect" class="full-width join-mic-select" aria-label="Choose microphone before joining">
+                    <option value="">Default microphone</option>
+                  </select>
+                  <button type="button" id="joinMicRefreshBtn" class="btn small-btn icon-btn" title="Refresh microphones" aria-label="Refresh microphones"><i class="fa-solid fa-rotate"></i></button>
+                </div>
                 <button id="joinBtn" class="btn primary-btn landing-main-btn">
                   <span>Join meeting</span><i class="fa-solid fa-arrow-right"></i>
                 </button>
@@ -365,6 +372,7 @@
         <button type="button" class="rail-btn rail-panel" data-panel="room" title="Room"><i class="fa-solid fa-door-open"></i></button>
         <button type="button" class="rail-btn rail-panel notes-desktop-only" data-panel="notes" title="Notes"><i class="fa-solid fa-note-sticky"></i></button>
         <button type="button" class="rail-btn rail-panel" data-panel="screenshare" title="Screen share"><i class="fa-solid fa-display"></i><span class="rail-badge hidden" id="railScreensBadge"></span></button>
+        <button type="button" class="rail-btn rail-panel" data-panel="shortcuts" title="Shortcuts (K)" id="railShortcutsBtn"><i class="fa-solid fa-keyboard"></i></button>
         <button type="button" class="rail-btn rail-panel rail-bottom-ish" data-panel="account" title="Account"><i class="fa-regular fa-user"></i></button>
       </aside>
       <!-- COL2: expandable panel -->
@@ -522,6 +530,17 @@
                   <input type="file" id="stImageInputSide" accept="image/*" multiple hidden>
                 </div>
                 <p class="st-empty st-hint"></p>
+              </div>
+            </div>
+
+            <!-- SHORTCUTS TAB -->
+            <div class="side-tab-panel hidden" id="shortcutsTab" data-tab="shortcuts" role="tabpanel">
+              <div class="panel-block shortcuts-panel-block">
+                <div class="more-hub-section">Keyboard shortcuts</div>
+                <ul class="shortcuts-stripe-list" id="shortcutsStripeList" aria-label="Meeting shortcuts">
+                  <!-- filled by JS -->
+                </ul>
+                <p class="shortcuts-hint">Shortcuts are ignored while typing in chat or notes.</p>
               </div>
             </div>
 
@@ -1401,6 +1420,21 @@
     <div id="rejoinBar" class="rejoin-bar hidden">
       <p>You previously joined this meeting.</p>
       <button type="button" id="rejoinBtn" class="btn primary-btn">Rejoin</button>
+    </div>
+
+    <!-- MIC SOURCE PICKER -->
+    <div id="micSourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="micSourceTitle">
+      <div class="modal-backdrop" id="micSourceBackdrop"></div>
+      <div class="modal-card mic-source-card">
+        <button type="button" class="modal-close" id="micSourceClose" title="Close" aria-label="Close">&times;</button>
+        <h2 id="micSourceTitle"><i class="fa-solid fa-microphone"></i> Choose microphone</h2>
+        <p class="modal-sub">Select the mic you want to use in this meeting.</p>
+        <div class="mic-source-list" id="micSourceList" role="listbox" aria-label="Available microphones"></div>
+        <div class="mic-source-actions">
+          <button type="button" id="micSourceRefresh" class="btn small-btn"><i class="fa-solid fa-rotate"></i> Refresh</button>
+          <button type="button" id="micSourceDone" class="btn primary-btn small-btn">Done</button>
+        </div>
+      </div>
     </div>
 
     <div id="toastHost" class="toast-host" aria-live="polite"></div>

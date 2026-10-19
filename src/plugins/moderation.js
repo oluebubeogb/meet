@@ -381,6 +381,36 @@ module.exports = {
       emitRoster(meetingCode, meeting);
     });
 
+    // Clear host-mute so participant may unmute themselves (pairs with ask-unmute)
+    ctx.onWs('allow-unmute', ({ msg, participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || !can(meeting, actor, 'muteOthers')) return;
+      const targetId = msg.targetId;
+      const target = meeting.participants.get(targetId);
+      if (!target) return;
+      target.mutedByHost = false;
+      sendToParticipant(targetId, {
+        type: 'allow-unmute',
+        by: participantId,
+        byName: actor.name,
+      });
+      emitRoster(meetingCode, meeting);
+    });
+
+    // Host asks participant to open mic source picker (discoverability)
+    ctx.onWs('ask-choose-mic', ({ msg, participantId, meeting, meetingCode }) => {
+      const actor = meeting.participants.get(participantId);
+      if (!actor || !can(meeting, actor, 'muteOthers')) return;
+      const targetId = msg.targetId;
+      const target = meeting.participants.get(targetId);
+      if (!target || target.status !== 'ACTIVE') return;
+      sendToParticipant(targetId, {
+        type: 'ask-choose-mic',
+        by: participantId,
+        byName: actor.name,
+      });
+    });
+
     ctx.onWs('set-max-participants', ({ msg, participantId, meeting, meetingCode }) => {
       const actor = meeting.participants.get(participantId);
       if (!actor || actor.role !== 'host') return;

@@ -874,8 +874,49 @@
             } catch (_) {}
             try { sendWS({ type: 'unmute-self' }); } catch (_) {}
           }},
+          { label: 'Choose mic', onClick: function () {
+            try {
+              if (typeof window.__meetOpenMicPicker === 'function') window.__meetOpenMicPicker();
+            } catch (_) {}
+          }},
           { label: 'Dismiss', onClick: function () {} },
         ]);
+        return;
+      }
+      if (msg.type === 'allow-unmute') {
+        try {
+          // Host cleared mutedByHost — participant may unmute freely
+          var me = (participants || []).find(function (p) {
+            return p.id === (currentMeeting && currentMeeting.participantId);
+          });
+          if (me) me.mutedByHost = false;
+        } catch (_) {}
+        showToast((msg.byName || 'Host') + ' allowed you to unmute', [
+          { label: 'Unmute', onClick: function () {
+            try {
+              if (!micOn) toggleMic();
+            } catch (_) {}
+            try { sendWS({ type: 'unmute-self' }); } catch (_) {}
+          }},
+          { label: 'Dismiss', onClick: function () {} },
+        ]);
+        return;
+      }
+      if (msg.type === 'ask-choose-mic') {
+        showToast((msg.byName || 'Host') + ' asks you to choose your microphone', [
+          { label: 'Choose mic', onClick: function () {
+            try {
+              if (typeof window.__meetOpenMicPicker === 'function') window.__meetOpenMicPicker();
+            } catch (_) {}
+          }},
+          { label: 'Dismiss', onClick: function () {} },
+        ]);
+        // Also open picker directly for visibility
+        try {
+          if (typeof window.__meetOpenMicPicker === 'function') {
+            setTimeout(function () { window.__meetOpenMicPicker(); }, 200);
+          }
+        } catch (_) {}
         return;
       }
       if (msg.type === 'removed' || msg.type === 'declined') {
@@ -2243,7 +2284,9 @@
               const canRemove = !!(myPermissions.removePeople || hostLike);
               if (canMute) {
                 actions.push({ act: 'mute', label: 'Mute', icon: 'fa-microphone-slash' });
+                actions.push({ act: 'allow-unmute', label: 'Allow unmute', icon: 'fa-microphone' });
                 actions.push({ act: 'ask-unmute', label: 'Ask to unmute', icon: 'fa-microphone' });
+                actions.push({ act: 'ask-choose-mic', label: 'Ask to choose mic', icon: 'fa-sliders' });
               }
               if (canLower && p.handRaised) actions.push({ act: 'lower-hand', label: 'Lower hand', icon: 'fa-hand' });
               if (p.sharing && canMute) actions.push({ act: 'stop-share', label: 'Stop sharing', icon: 'fa-desktop' });
@@ -4453,7 +4496,9 @@
 
       if (canMute) {
         html += `<button type="button" data-act="mute"><i class="fa-solid fa-microphone-slash"></i> Mute</button>`;
+        html += `<button type="button" data-act="allow-unmute"><i class="fa-solid fa-microphone"></i> Allow unmute</button>`;
         html += `<button type="button" data-act="ask-unmute"><i class="fa-solid fa-microphone"></i> Ask to unmute</button>`;
+        html += `<button type="button" data-act="ask-choose-mic"><i class="fa-solid fa-sliders"></i> Ask to choose mic</button>`;
       }
       if (canMute || canModerateNow()) {
         html += `<button type="button" data-act="ring"><i class="fa-solid fa-bell"></i> Ring</button>`;
@@ -4541,7 +4586,15 @@
       e.stopPropagation();
       const act = btn.getAttribute('data-act');
       if (act === 'mute') sendWS({ type: 'mute-participant', targetId: p.id });
-      if (act === 'ask-unmute') sendWS({ type: 'ask-unmute', targetId: p.id });
+      if (act === 'allow-unmute') {
+        sendWS({ type: 'allow-unmute', targetId: p.id });
+        sendWS({ type: 'ask-unmute', targetId: p.id });
+      }
+      if (act === 'ask-unmute') {
+        sendWS({ type: 'allow-unmute', targetId: p.id });
+        sendWS({ type: 'ask-unmute', targetId: p.id });
+      }
+      if (act === 'ask-choose-mic') sendWS({ type: 'ask-choose-mic', targetId: p.id });
       if (act === 'ring') {
         if (typeof window.__ringParticipant === 'function') window.__ringParticipant(p.id);
         else sendWS({ type: 'ring-participant', targetId: p.id });
@@ -5292,8 +5345,11 @@
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable || (e.target.closest && e.target.closest('.wb-textbox')))) return;
       if (!currentMeeting) return;
       if (e.key === 'm' || e.key === 'M') {
+        // Short press handled on keyup so long-press M can open mic picker
         e.preventDefault();
-        try { toggleMic(); } catch (_) {}
+        if (window.__meetMLongFired) return;
+        // Defer toggle to keyup via flag — if long-press fires, skip
+        window.__meetMPendingToggle = true;
       }
       if (e.key === 's' || e.key === 'S') {
         if (e.metaKey || e.ctrlKey) return;
@@ -11837,3 +11893,455 @@
   // Wrap JSON message dispatch if exposed
 })();
 
+
+/* ========================================================================
+ * Shortcuts panel, long-press M mic picker, join mic select, auto PiP
+ * ======================================================================== */
+(function meetShortcutsAndMicUX() {
+  var PREFERRED_MIC_KEY = 'meet.preferredMicId';
+  var mKeyDownAt = 0;
+  var mLongFired = false;
+  var M_LONG_MS = 450;
+  var autoPipArmed = false;
+
+  var SHORTCUT_ROWS = [
+    { keys: ['M'], label: 'Toggle microphone', hint: 'Short press' },
+    { keys: ['Hold M'], label: 'Choose microphone source', hint: 'Long press ~0.5s' },
+    { keys: ['S'], label: 'Start / stop screen share' },
+    { keys: ['H'], label: 'Raise / lower hand' },
+    { keys: ['K'], label: 'Open shortcuts panel' },
+    { keys: ['C'], label: 'Open chat', hint: 'When supported' },
+  ];
+
+  function preferredMicId() {
+    try { return localStorage.getItem(PREFERRED_MIC_KEY) || ''; } catch (_) { return ''; }
+  }
+  function setPreferredMicId(id) {
+    try {
+      if (id) localStorage.setItem(PREFERRED_MIC_KEY, id);
+      else localStorage.removeItem(PREFERRED_MIC_KEY);
+    } catch (_) {}
+  }
+
+  function isTypingTarget(el) {
+    if (!el) return false;
+    var tag = (el.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (el.isContentEditable) return true;
+    if (el.closest && el.closest('.wb-textbox')) return true;
+    return false;
+  }
+
+  function inMeeting() {
+    return !!(typeof currentMeeting !== 'undefined' && currentMeeting);
+  }
+
+  async function listAudioInputs() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    try {
+      // Request permission so labels are available
+      try {
+        var tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+        try { tmp.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+      } catch (_) {}
+      var devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter(function (d) { return d.kind === 'audioinput'; });
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function applyMicDevice(deviceId) {
+    if (!deviceId) return false;
+    setPreferredMicId(deviceId);
+    try {
+      var sel = document.getElementById('micDeviceSelect');
+      if (sel) {
+        // ensure option exists
+        var found = false;
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === deviceId) { found = true; break; }
+        }
+        if (found) sel.value = deviceId;
+      }
+      var joinSel = document.getElementById('joinMicDeviceSelect');
+      if (joinSel) {
+        for (var j = 0; j < joinSel.options.length; j++) {
+          if (joinSel.options[j].value === deviceId) { joinSel.value = deviceId; break; }
+        }
+      }
+    } catch (_) {}
+    try {
+      if (typeof room !== 'undefined' && room && typeof room.switchActiveDevice === 'function') {
+        await room.switchActiveDevice('audioinput', deviceId);
+        if (typeof showToast === 'function') {
+          var label = 'Microphone updated';
+          try {
+            var mics = await listAudioInputs();
+            var hit = mics.find(function (d) { return d.deviceId === deviceId; });
+            if (hit && hit.label) label = 'Microphone: ' + hit.label;
+          } catch (_) {}
+          showToast(label);
+        }
+        return true;
+      }
+    } catch (err) {
+      console.warn('[mic] switchActiveDevice failed', err);
+    }
+    return false;
+  }
+
+  async function fillSelectWithMics(selectEl, includeDefault) {
+    if (!selectEl) return;
+    var mics = await listAudioInputs();
+    var prev = selectEl.value || preferredMicId();
+    selectEl.innerHTML = '';
+    if (includeDefault) {
+      var def = document.createElement('option');
+      def.value = '';
+      def.textContent = 'Default microphone';
+      selectEl.appendChild(def);
+    }
+    mics.forEach(function (d, idx) {
+      var o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Microphone ' + (idx + 1));
+      selectEl.appendChild(o);
+    });
+    if (prev) {
+      selectEl.value = prev;
+      if (selectEl.value !== prev && !includeDefault && mics[0]) {
+        selectEl.value = mics[0].deviceId;
+      }
+    }
+  }
+
+  function renderShortcutsList() {
+    var list = document.getElementById('shortcutsStripeList');
+    if (!list) return;
+    list.innerHTML = '';
+    SHORTCUT_ROWS.forEach(function (row) {
+      var li = document.createElement('li');
+      li.className = 'shortcut-row';
+      var keysHtml = row.keys.map(function (k) {
+        return '<span class="shortcut-key">' + k.replace(/</g, '&lt;') + '</span>';
+      }).join('');
+      li.innerHTML =
+        '<span class="shortcut-keys">' + keysHtml + '</span>' +
+        '<span class="shortcut-label">' + row.label +
+        (row.hint ? '<em>' + row.hint + '</em>' : '') +
+        '</span>';
+      list.appendChild(li);
+    });
+  }
+
+  function openShortcutsPanel() {
+    renderShortcutsList();
+    if (typeof window.__meetTogglePanel === 'function') {
+      // Force open (toggle closes if already open)
+      var drawer = document.getElementById('meetSideDrawer');
+      var railBtn = document.querySelector('.rail-btn[data-panel="shortcuts"]');
+      if (drawer && !drawer.classList.contains('hidden') && railBtn && railBtn.classList.contains('active')) {
+        // already open — leave it
+        return;
+      }
+      window.__meetTogglePanel('shortcuts');
+    } else {
+      document.getElementById('railShortcutsBtn')?.click();
+    }
+  }
+  window.__meetOpenShortcutsPanel = openShortcutsPanel;
+
+  async function openMicPicker() {
+    var modal = document.getElementById('micSourceModal');
+    var list = document.getElementById('micSourceList');
+    if (!modal || !list) {
+      // Fallback: open media panel
+      try {
+        if (typeof window.__meetTogglePanel === 'function') window.__meetTogglePanel('media');
+        if (typeof refreshMicDevices === 'function') refreshMicDevices();
+      } catch (_) {}
+      return;
+    }
+    list.innerHTML = '<div class="acc-empty">Loading microphones…</div>';
+    modal.classList.remove('hidden');
+    var mics = await listAudioInputs();
+    var current = preferredMicId();
+    try {
+      var sel = document.getElementById('micDeviceSelect');
+      if (sel && sel.value) current = sel.value;
+    } catch (_) {}
+    list.innerHTML = '';
+    if (!mics.length) {
+      list.innerHTML = '<div class="acc-empty">No microphones found. Allow mic permission and refresh.</div>';
+      return;
+    }
+    mics.forEach(function (d, idx) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mic-source-option' + (d.deviceId === current ? ' active' : '');
+      btn.setAttribute('role', 'option');
+      btn.dataset.deviceId = d.deviceId;
+      btn.innerHTML =
+        '<span class="mic-opt-icon"><i class="fa-solid fa-microphone"></i></span>' +
+        '<span class="mic-opt-label">' + (d.label || ('Microphone ' + (idx + 1))).replace(/</g, '&lt;') + '</span>' +
+        '<span class="mic-opt-check"><i class="fa-solid fa-check"></i></span>';
+      btn.addEventListener('click', async function () {
+        list.querySelectorAll('.mic-source-option').forEach(function (el) { el.classList.remove('active'); });
+        btn.classList.add('active');
+        await applyMicDevice(d.deviceId);
+        try {
+          if (typeof refreshMicDevices === 'function') await refreshMicDevices();
+        } catch (_) {}
+        // Mirror into media select
+        try {
+          var mediaSel = document.getElementById('micDeviceSelect');
+          if (mediaSel) {
+            await fillSelectWithMics(mediaSel, false);
+            mediaSel.value = d.deviceId;
+          }
+        } catch (_) {}
+      });
+      list.appendChild(btn);
+    });
+  }
+  window.__meetOpenMicPicker = openMicPicker;
+
+  function closeMicPicker() {
+    document.getElementById('micSourceModal')?.classList.add('hidden');
+  }
+
+  // Wire modal chrome
+  document.getElementById('micSourceClose')?.addEventListener('click', closeMicPicker);
+  document.getElementById('micSourceDone')?.addEventListener('click', closeMicPicker);
+  document.getElementById('micSourceRefresh')?.addEventListener('click', function () {
+    openMicPicker();
+  });
+  document.getElementById('micSourceModal')?.addEventListener('click', function (e) {
+    if (e.target === e.currentTarget) closeMicPicker();
+  });
+
+  // Long-press M + K for shortcuts
+  document.addEventListener('keydown', function (e) {
+    if (isTypingTarget(e.target)) return;
+    if (!inMeeting()) return;
+    if (e.key === 'm' || e.key === 'M') {
+      if (e.repeat) return;
+      mKeyDownAt = Date.now();
+      mLongFired = false;
+      // Schedule long-press
+      clearTimeout(window.__meetMLongTimer);
+      window.__meetMLongTimer = setTimeout(function () {
+        mLongFired = true;
+        window.__meetMLongFired = true;
+        window.__meetMPendingToggle = false;
+        try { openMicPicker(); } catch (_) {}
+      }, M_LONG_MS);
+      // Don't preventDefault yet — short press handled by existing toggleMic listener
+      return;
+    }
+    if (e.key === 'k' || e.key === 'K') {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      openShortcutsPanel();
+    }
+  }, true);
+
+  document.addEventListener('keyup', function (e) {
+    if (e.key === 'm' || e.key === 'M') {
+      clearTimeout(window.__meetMLongTimer);
+      if (mLongFired || window.__meetMLongFired) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.__meetMPendingToggle = false;
+        window.__meetMLongFired = false;
+        mLongFired = false;
+        mKeyDownAt = 0;
+        return;
+      }
+      // Short press: toggle mic
+      if (window.__meetMPendingToggle && inMeeting() && !isTypingTarget(e.target)) {
+        window.__meetMPendingToggle = false;
+        try {
+          if (typeof toggleMic === 'function') toggleMic();
+        } catch (_) {}
+      }
+      mKeyDownAt = 0;
+      mLongFired = false;
+    }
+  }, true);
+
+  // Long-press on mic toolbar button
+  function wireMicLongPress(btn) {
+    if (!btn || btn.dataset.micLongWired) return;
+    btn.dataset.micLongWired = '1';
+    var long = false;
+    var timer = null;
+    btn.addEventListener('pointerdown', function (e) {
+      if (e.button && e.button !== 0) return;
+      long = false;
+      timer = setTimeout(function () {
+        long = true;
+        openMicPicker();
+      }, M_LONG_MS);
+    });
+    function end() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    }
+    btn.addEventListener('pointerup', end);
+    btn.addEventListener('pointerleave', end);
+    btn.addEventListener('pointercancel', end);
+    btn.addEventListener('click', function (e) {
+      if (long) {
+        e.preventDefault();
+        e.stopPropagation();
+        long = false;
+      }
+    }, true);
+  }
+  wireMicLongPress(document.getElementById('micBtn'));
+  wireMicLongPress(document.getElementById('mfnMic'));
+  wireMicLongPress(document.getElementById('mediaMicToggle'));
+
+  // Populate shortcuts when panel opens
+  var origToggle = window.__meetTogglePanel;
+  if (typeof origToggle === 'function') {
+    window.__meetTogglePanel = function (name) {
+      if (name === 'shortcuts') renderShortcutsList();
+      return origToggle.apply(this, arguments);
+    };
+  }
+  // Also when rail clicked
+  document.getElementById('railShortcutsBtn')?.addEventListener('click', function () {
+    setTimeout(renderShortcutsList, 50);
+  });
+
+  // Join-page mic select
+  async function refreshJoinMicSelect() {
+    var sel = document.getElementById('joinMicDeviceSelect');
+    if (!sel) return;
+    await fillSelectWithMics(sel, true);
+    var pref = preferredMicId();
+    if (pref) {
+      try { sel.value = pref; } catch (_) {}
+    }
+  }
+  document.getElementById('joinMicRefreshBtn')?.addEventListener('click', function (e) {
+    e.preventDefault();
+    refreshJoinMicSelect();
+  });
+  document.getElementById('joinMicDeviceSelect')?.addEventListener('change', function (e) {
+    var id = e.target.value;
+    if (id) setPreferredMicId(id);
+  });
+  // Refresh when landing is visible
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { refreshJoinMicSelect(); });
+  } else {
+    refreshJoinMicSelect();
+  }
+  // Also on focus of join row (permission may have changed)
+  document.getElementById('joinMicDeviceSelect')?.addEventListener('focus', function () {
+    refreshJoinMicSelect();
+  });
+
+  // Apply preferred mic after LiveKit connects
+  var applyPrefAfterConnect = async function () {
+    var id = preferredMicId();
+    if (!id) return;
+    try {
+      if (typeof room !== 'undefined' && room && room.localParticipant) {
+        await applyMicDevice(id);
+      }
+    } catch (_) {}
+    try {
+      if (typeof refreshMicDevices === 'function') await refreshMicDevices();
+      var sel = document.getElementById('micDeviceSelect');
+      if (sel && id) sel.value = id;
+    } catch (_) {}
+  };
+  // Hook showMeeting / Connected via interval once when meeting starts
+  var lastMeetingId = null;
+  setInterval(function () {
+    try {
+      if (!inMeeting()) {
+        lastMeetingId = null;
+        autoPipArmed = false;
+        return;
+      }
+      var id = currentMeeting && (currentMeeting.code || currentMeeting.participantId);
+      if (id && id !== lastMeetingId) {
+        lastMeetingId = id;
+        setTimeout(applyPrefAfterConnect, 800);
+        setTimeout(applyPrefAfterConnect, 2500);
+        autoPipArmed = true;
+      }
+    } catch (_) {}
+  }, 1000);
+
+  // Enhance existing media select change to persist preference
+  document.getElementById('micDeviceSelect')?.addEventListener('change', function (e) {
+    var id = e.target && e.target.value;
+    if (id) setPreferredMicId(id);
+  });
+
+  // ---- Auto PiP when user leaves the call page (tab hide / blur) ----
+  async function tryAutoPiP() {
+    if (!inMeeting()) return;
+    if (document.pictureInPictureElement) return;
+    try {
+      var vid = document.querySelector('#bigView video, #screenCards video:not([src=""]), .stage-main video, video');
+      if (!vid) {
+        var vids = document.querySelectorAll('video');
+        for (var i = 0; i < vids.length; i++) {
+          if (vids[i].srcObject || vids[i].currentSrc) { vid = vids[i]; break; }
+        }
+      }
+      // Prefer standard video PiP
+      if (vid && document.pictureInPictureEnabled) {
+        await vid.requestPictureInPicture();
+        if (typeof showToast === 'function') showToast('Picture-in-Picture on — meeting stays visible');
+        return;
+      }
+      // Fallback: Document PiP (Chrome) with a small call surface
+      if (window.documentPictureInPicture && typeof window.documentPictureInPicture.requestWindow === 'function') {
+        var pipWin = await window.documentPictureInPicture.requestWindow({ width: 360, height: 220 });
+        var clone = document.createElement('div');
+        clone.style.cssText = 'margin:0;padding:8px;background:#111;color:#fff;font:14px system-ui;height:100%;box-sizing:border-box';
+        clone.innerHTML = '<strong>Meet</strong> — still in call. Return to the tab to control mic/share.';
+        if (vid) {
+          var v2 = document.createElement('video');
+          v2.autoplay = true;
+          v2.muted = true;
+          v2.playsInline = true;
+          v2.style.cssText = 'width:100%;max-height:160px;object-fit:contain;background:#000;border-radius:8px;margin-top:6px';
+          try { v2.srcObject = vid.srcObject; } catch (_) {}
+          clone.appendChild(v2);
+        }
+        pipWin.document.body.style.margin = '0';
+        pipWin.document.body.appendChild(clone);
+        if (typeof showToast === 'function') showToast('Call opened in a small window');
+      }
+    } catch (err) {
+      console.debug('[pip] auto pip skipped', err && err.message);
+    }
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && autoPipArmed && inMeeting()) {
+      tryAutoPiP();
+    }
+  });
+
+  // Also when window loses focus while still visible (e.g. another app) — softer
+  window.addEventListener('blur', function () {
+    if (!document.hidden) return; // visibilitychange handles tab switch
+  });
+
+  // Expose for manual use
+  window.__meetTryAutoPiP = tryAutoPiP;
+
+  // Render list once at boot if panel exists
+  try { renderShortcutsList(); } catch (_) {}
+})();
