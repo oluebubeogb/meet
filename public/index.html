@@ -538,7 +538,12 @@
               <div class="panel-block shortcuts-panel-block">
                 <div class="more-hub-section">Keyboard shortcuts</div>
                 <ul class="shortcuts-stripe-list" id="shortcutsStripeList" aria-label="Meeting shortcuts">
-                  <!-- filled by JS -->
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">M</span></span><span class="shortcut-label">Toggle microphone<em>Short press</em></span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">Hold M</span></span><span class="shortcut-label">Choose microphone source<em>Long press ~0.5s</em></span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">S</span></span><span class="shortcut-label">Start / stop screen share</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">H</span></span><span class="shortcut-label">Raise / lower hand</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">K</span></span><span class="shortcut-label">Open shortcuts panel</span></li>
+                  <li class="shortcut-row"><span class="shortcut-keys"><span class="shortcut-key">C</span></span><span class="shortcut-label">Open chat<em>When supported</em></span></li>
                 </ul>
                 <p class="shortcuts-hint">Shortcuts are ignored while typing in chat or notes.</p>
               </div>
@@ -800,7 +805,10 @@
                 <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
                 <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
                 <button type="button" id="stageHandBtn" class="emoji-btn stage-hand" title="Hand">✋</button>
-                <button type="button" id="stageMicBtn" class="emoji-btn stage-mic-fa" title="Mic"><i class="fa-solid fa-microphone"></i></button>
+                <span class="stage-mic-wrap" id="stageMicWrap">
+                  <button type="button" id="stageMicBtn" class="emoji-btn stage-mic-fa" title="Mic"><i class="fa-solid fa-microphone"></i></button>
+                  <button type="button" id="stageMicChevron" class="emoji-btn stage-mic-chevron" title="Choose microphone" aria-label="Choose microphone"><i class="fa-solid fa-chevron-up"></i></button>
+                </span>
                 <button type="button" id="stageFsBtn" class="emoji-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
               </div>
             </div>
@@ -890,10 +898,15 @@
             </div><!-- /.meet-stage-row -->
 
             <div class="call-controls toolbar-pill desktop-only" role="toolbar" aria-label="Meeting controls">
-              <button id="micBtn" class="btn call-btn" title="Microphone (M)" aria-label="Toggle microphone">
-                <i class="fa-solid fa-microphone"></i>
-                <span>Mic</span>
-              </button>
+              <span class="mic-btn-wrap" id="micBtnWrap">
+                <button id="micBtn" class="btn call-btn" title="Microphone (M)" aria-label="Toggle microphone">
+                  <i class="fa-solid fa-microphone"></i>
+                  <span>Mic</span>
+                </button>
+                <button type="button" id="micChevronBtn" class="btn call-btn mic-chevron-btn" title="Choose microphone" aria-label="Choose microphone">
+                  <i class="fa-solid fa-chevron-up"></i>
+                </button>
+              </span>
               <button id="cameraBtn" class="btn call-btn" title="Camera (V)" aria-label="Toggle camera" aria-pressed="false">
                 <i class="fa-solid fa-video"></i>
                 <span>Cam</span>

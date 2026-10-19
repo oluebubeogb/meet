@@ -8405,3 +8405,46 @@ html.dark .shortcut-key {
   align-items: center;
   gap: 0.45rem;
 }
+
+
+/* Mic chevron next to mic controls */
+.mic-btn-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  position: relative;
+  border-radius: 12px;
+  overflow: visible;
+}
+.mic-btn-wrap #micBtn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.mic-chevron-btn {
+  min-width: 1.6rem !important;
+  width: 1.65rem !important;
+  padding: 0 0.15rem !important;
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  margin-left: -1px;
+  opacity: 0.85;
+}
+.mic-chevron-btn:hover {
+  opacity: 1;
+}
+.mic-chevron-btn i {
+  font-size: 0.7rem;
+}
+.stage-mic-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  position: relative;
+}
+.stage-mic-chevron {
+  padding: 0.2rem 0.35rem !important;
+  font-size: 0.65rem !important;
+  opacity: 0.8;
+}
+.stage-mic-chevron:hover {
+  opacity: 1;
+}
